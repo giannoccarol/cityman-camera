@@ -1488,93 +1488,43 @@ class CameraController(private val context: Context) {
 
     @Volatile private var burst: Burst? = null
 
-    private data class BurstPlan(
-        val iso: Int,
-        val exposureNs: Long,
-        val gain: Float,
-        val frames: Int,
-        val underEv: Float = BURST_UNDER_EV.toFloat(),
-        /** Extra highlight frames (bracketing) at [shortExposureNs], appended after [frames]. */
-        val shortFrames: Int = 0,
-        val shortExposureNs: Long = 0,
-    )
 
     /**
      * Exposure of the burst frames. Automatic: 0.7 EV under what auto exposure measured (to keep
      * highlights), shutter at most 1/15 s, ISO within what the HAL accepts manually; whatever is
      * missing becomes digital gain after the merge, where the noise is lower.
      */
+    /** Collects what [BurstPlanner] needs from the camera and the sensors. */
     private fun burstPlan(c: CameraCaps): BurstPlan {
         val m = controls
         val isoRange = c.isoRange
         val expRange = c.exposureRange
-        val omega = gyroRate
-        // Focal length in RAW pixels (both lenses are about 70° wide) and the blur we accept per
-        // frame: 2 px, twice that behind the rear lens' optical stabiliser.
-        val rawWidth = c.rawSize?.width ?: 4000
-        val focalPx = rawWidth / 1.4
-        val blurPx = if (c.front) 2.0 else 4.0
-        val tripod = isStill()
-        val shakeLimit = when {
-            tripod -> NIGHT_SHUTTER_NS.toDouble()
-            gyroSamples < 20 || gyroMaxSeen <= 0.0 -> BURST_LOW_LIGHT_SHUTTER_NS.toDouble()
-            omega <= 0.0 -> BURST_LOW_LIGHT_SHUTTER_NS.toDouble()
-            else -> (blurPx / (omega * focalPx) * 1e9).coerceIn(1e9 / 60, BURST_LOW_LIGHT_SHUTTER_NS.toDouble())
-        }.toLong()
-        var underUsed = 0f
-        val (iso, exposure, gain) = if (m.iso != null || m.exposureNs != null || isoRange == null || expRange == null) {
-            val (i, e) = manualExposure(c, m)
-            Triple(i, e, 1f)
-        } else {
-            val ev = 2.0.pow(m.evSteps * c.evStep.toDouble())
-            val product = autoIso.toDouble() * autoExposureNs * ev
-            // Under-exposure from the viewfinder: more when highlights are blown, less when not.
-            val clipped = analyzer?.latestClipped ?: -1f
-            val underEv = when {
-                clipped < 0f -> BURST_UNDER_EV
-                clipped > 0.04f -> 1.6
-                clipped > 0.01f -> 1.1
-                clipped < 0.002f -> 0.4
-                else -> BURST_UNDER_EV
-            }
-            underUsed = underEv.toFloat()
-            val target = product * 2.0.pow(-underEv)
-            // Short frames keep hand shake out of each frame (merging takes care of the noise):
-            // 1/30 s or what the gyroscope allows, longer only once ISO is at its maximum.
-            // Manual ISO stops at the sensor's analogue maximum (342 here, the HAL clamps higher
-            // values); handheld, up to 2× digital gain after the merge costs less than shake.
-            // On a tripod (gyroscope still) the frames grow up to 1/2 s instead of gaining.
-            // The gyroscope only shortens frames when there is light to spare: it never pushes
-            // the digital gain past 2× (handheld frames may still grow to 1/10 s for that).
-            val base = min(BURST_MAX_SHUTTER_NS, shakeLimit)
-            val atMaxIso = (target / (isoRange.upper * if (tripod) 1.0 else BURST_DIGITAL_GAIN_FIRST)).toLong()
-            val cap = atMaxIso.coerceIn(base, if (tripod) NIGHT_SHUTTER_NS else max(base, BURST_LOW_LIGHT_SHUTTER_NS))
-            val exp = (target / isoRange.lower).toLong().coerceIn(expRange.lower, min(cap, expRange.upper))
-            val i = (target / exp).roundToInt().coerceIn(isoRange.lower, isoRange.upper)
-            Triple(i, exp, (product / (i.toDouble() * exp)).toFloat().coerceIn(1f, 64f))
-        }
-        // Fewer frames when the phone is getting hot.
+        val manual = if (m.iso != null || m.exposureNs != null || isoRange == null || expRange == null) manualExposure(c, m) else null
         val headroom = runCatching { powerManager?.getThermalHeadroom(10) ?: 0f }.getOrDefault(0f)
         val hot = headroom.isFinite() && headroom >= 0.9f ||
             (powerManager?.currentThermalStatus ?: 0) >= android.os.PowerManager.THERMAL_STATUS_MODERATE
-        val chosen = _state.value.mfFrames
-        val frames = if (hot) 4 else when {
-            chosen > 0 -> chosen
-            tripod && (gain >= 1.5f || exposure >= 100_000_000L) -> MAX_BURST
-            gain >= 1.8f || (isoRange != null && iso >= isoRange.upper * 0.9) -> 8
-            else -> 6
-        }.coerceIn(2, MAX_BURST)
-        if (hot) Log.w(TAG, "thermal headroom $headroom: burst limited to $frames frames")
-        Log.i(TAG, "plan: accel jitter ${String.format(java.util.Locale.US, "%.3f", accelJitter)}, gyro ${String.format(java.util.Locale.US, "%.4f", omega)} rad/s${if (tripod) " (still)" else ""}, shake limit ${shakeLimit / 1000} µs, clipped ${analyzer?.latestClipped}")
-        // Backlit scenes: two frames 2 EV shorter recover what is blown in the others.
-        val clippedNow = analyzer?.latestClipped ?: 0f
-        val shortExp = exposure / 4
-        val bracket = m.iso == null && m.exposureNs == null && !tripod && clippedNow > 0.02f &&
-            expRange != null && shortExp >= expRange.lower && frames + 2 <= MAX_BURST
-        return BurstPlan(
-            iso, exposure, gain, frames, underUsed,
-            shortFrames = if (bracket) 2 else 0, shortExposureNs = if (bracket) shortExp else 0,
+        val input = PlanInput(
+            isoMin = isoRange?.lower ?: 100,
+            isoMax = isoRange?.upper ?: 800,
+            exposureMinNs = expRange?.lower ?: 100_000L,
+            exposureMaxNs = expRange?.upper ?: 1_000_000_000L,
+            autoIso = autoIso,
+            autoExposureNs = autoExposureNs,
+            evCompensation = m.evSteps * c.evStep.toDouble(),
+            manual = manual,
+            clipped = analyzer?.latestClipped ?: -1f,
+            gyroRate = gyroRate,
+            gyroTrusted = gyroSamples >= 20 && gyroMaxSeen > 0.0,
+            still = isStill(),
+            rawWidth = c.rawSize?.width ?: 4000,
+            front = c.front,
+            hot = hot,
+            chosenFrames = _state.value.mfFrames,
         )
+        val plan = BurstPlanner.plan(input)
+        if (hot) Log.w(TAG, "thermal headroom $headroom: burst limited to ${plan.frames} frames")
+        Log.i(TAG, "plan: accel jitter ${String.format(java.util.Locale.US, "%.3f", accelJitter)}, $input")
+        return plan
     }
 
     // ---- gyroscope: how much the hand shakes, for the burst exposure ----------------------
@@ -1898,14 +1848,7 @@ class CameraController(private val context: Context) {
 
     /** EXIF GPS tags (degrees, minutes, seconds as rationals). */
     private fun writeGps(exif: ExifInterface, l: android.location.Location) {
-        fun dms(v: Double): String {
-            val a = kotlin.math.abs(v)
-            val d = a.toInt()
-            val mFull = (a - d) * 60
-            val m = mFull.toInt()
-            val sec = ((mFull - m) * 60 * 1000).roundToLong()
-            return "$d/1,$m/1,$sec/1000"
-        }
+        fun dms(v: Double) = ExifFormat.dms(v)
         exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, dms(l.latitude))
         exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (l.latitude >= 0) "N" else "S")
         exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, dms(l.longitude))
@@ -2119,16 +2062,11 @@ class CameraController(private val context: Context) {
     companion object {
         private const val TAG = "ArcoCamera"
         private const val MAX_AUTO_SHUTTER_NS = 250_000_000L
-        private const val MAX_BURST = 12
+        private const val MAX_BURST = BurstPlanner.MAX_FRAMES
         private const val MAX_RAPID = 30
         private const val SAFETY_TAG = "arco-safety-jpeg"
-        private const val NIGHT_SHUTTER_NS = 500_000_000L
         private const val TRIPOD_RAD_S = 0.008
         private const val ACCEL_STILL_MS2 = 0.12f
-        private const val BURST_UNDER_EV = 0.7
-        private const val BURST_MAX_SHUTTER_NS = 33_333_333L
-        private const val BURST_LOW_LIGHT_SHUTTER_NS = 100_000_000L
-        private const val BURST_DIGITAL_GAIN_FIRST = 2.0
 
         fun exifOrientation(degrees: Int) = when (degrees) {
             90 -> ExifInterface.ORIENTATION_ROTATE_90
