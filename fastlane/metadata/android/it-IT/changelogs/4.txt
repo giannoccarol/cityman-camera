@@ -1,0 +1,7 @@
+0.3.0
+- Scatto a raffica: tenere premuto lo scatto (fino a 30 foto)
+- Posizione nell'EXIF e copia del JPEG della fotocamera accanto a quello elaborato, facoltative
+- Video codificato direttamente sulle ROM che lo permettono, con ritorno automatico
+- JPEG di sicurezza se l'elaborazione multi-frame fallisce o viene annullata
+- Opzione sviluppatore per salvare le raffiche RAW e laboratorio sul computer per la taratura
+- Animazioni dei quadranti, scorciatoie del launcher, etichette per TalkBack

@@ -1,0 +1,7 @@
+0.3.0
+- Rapid fire: hold the shutter (up to 30 photos)
+- Optional location in EXIF, optional copy of the camera's own JPEG next to the processed one
+- Direct video encoding on ROMs that allow it, with automatic fallback
+- Safety JPEG when multi-frame processing fails or is cancelled
+- Developer option to save RAW bursts, and a burst lab on the computer for tuning
+- Dial animations, launcher shortcuts, TalkBack labels
