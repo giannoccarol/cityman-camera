@@ -20,10 +20,12 @@ libraries in use require).
   an extra DNG with the full 5344×3744 RAW frame (Android `DngCreator`). Files go to
   `DCIM/Camera` as `IMG_yyyyMMdd_HHmmss_SSS.jpg/.dng`.
 - Video: H.264 MP4 with AAC sound, 1080p at 20 Mbit/s on the rear camera (720p front),
-  `VID_…mp4`. Frames go camera → YUV → GL → recorder: this ROM's gralloc refuses buffers that
-  the camera writes and the encoder reads directly (`usage 0x30023`, BAD_VALUE), so the usual
-  recorder surface in the capture session records no frames. Rear video runs at 15–20 fps (the
-  sensor's single mode tops out at 20 fps).
+  `VID_…mp4`. Two paths: the camera writes straight into the encoder's input surface (ROMs
+  whose gralloc accepts camera → encoder buffers, from the 31/10 build on), or camera → YUV →
+  GL → recorder on builds whose gralloc refuses them (`usage 0x30023`, BAD_VALUE). Arco tries the
+  direct path and falls back by itself (lost encoder buffer or a recording without frames),
+  remembering the result; time-lapse and stabilisation always use the GL path. The direct path
+  has not been tried on the phone yet.
 - Video extras: AE badge to lock exposure and white balance (photo too), time-lapse (5×, 10×,
   30×, no sound), experimental gyroscope stabilisation (90 % crop moved and rotated against the
   shake; off by default, not yet tried while moving).
@@ -55,8 +57,12 @@ libraries in use require).
 - Hardware camera key: half press focuses, full press shoots. Volume keys also shoot.
 - Gallery thumbnail of the last photo or video: opens the gallery in review mode, so the camera
   album can be swiped through; the gallery app can be chosen in the settings.
-- Release builds use R8 (1.7 MB APK) and are signed from `keystore.properties` (storeFile,
-  storePassword, keyAlias, keyPassword; not in git) when present.
+- Launcher shortcuts (Video, Selfie), spoken labels for TalkBack, translations in Italian,
+  English, Spanish, French and German.
+- Release builds use R8 (about 1.9 MB) and are signed from `keystore.properties` (storeFile,
+  storePassword, keyAlias, keyPassword; not in git) when present. Releases with the APK are on
+  [GitHub](https://github.com/giannoccarol/cityman-camera/releases); GitHub Actions builds the
+  debug APK and runs the unit tests on every push.
 
 - Multi-frame RAW processing (see below), optional.
 
@@ -183,6 +189,11 @@ of RAW frames and merges them on the GPU (OpenGL ES 3.1 compute shaders, `proces
    shadows are lifted, more so in backlit scenes), black point, highlight shoulder, saturation,
    sRGB, S curve, zoom crop (Catmull-Rom ×2 from 1.5×), luma unsharp mask, rotation to upright,
    conversion to NV21 on the GPU.
+
+A burst also ends with one normal HAL JPEG at full exposure: it is dropped when the merged photo
+is saved, and kept instead when processing fails or is cancelled, so no shot is lost. The
+viewfinder analysis stream (for the exposure plan and the histogram, zebra and peaking) only
+runs when multi-frame is on or one of those tools is shown.
 
 Every finishing step can be turned off in the settings: noise reduction, local tone mapping,
 colour noise reduction, sharpening; "vivid colours" switches to a stronger look. With DNG on,

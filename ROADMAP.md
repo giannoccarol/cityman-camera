@@ -1,6 +1,6 @@
 # Arco — Roadmap
 
-**Data**: 31 ottobre 2026. **Obiettivo**: la fotocamera di tutti i giorni del Lumia 950 XL con
+**Data**: 31 ottobre 2026, aggiornata il 5 novembre. **Obiettivo**: la fotocamera di tutti i giorni del Lumia 950 XL con
 LineageOS 23.2, con controlli manuali sui quadranti ad arco e una qualità multi-frame vicina a
 GCam, entro i limiti termici dell'MSM8994.
 
@@ -9,18 +9,30 @@ nel README (o in un report), non quando il codice è su GitHub.
 
 ---
 
-## Dove siamo (31/10, fine giornata)
+## Dove siamo (5/11)
+
+Ultima release provata: **v0.1.1** (GitHub, 31/10). Dopo: 0.2.0 compilata, **non provata**.
 
 | Area | Stato | Note |
 |---|---|---|
 | Anteprima, rotazione, quadranti | funzionano | ISO manuale limitata a 342 dal HAL |
 | JPEG + DNG | funzionano | anche il DNG del RAW fuso |
-| Video | funziona su entrambe le camere | YUV → GL; blocco AE, time-lapse; stabilizzazione sperimentale non provata in movimento |
-| Multi-frame | funziona, opzionale | riferimento nitido, giroscopio + accelerometro, notte da fermo, zoom, JPEG in ~0,2 s |
-| Bracketing controluce, tone mapping a due scale | compilati | **da provare sul telefono** |
-| Avvio da schermata di blocco | funziona | va scelta Arco come predefinita una volta |
-| Impostazioni | pannello rapido + schermata completa, accento Material You | |
-| Test automatici | 7 test JVM | `./gradlew testDebugUnitTest` |
+| Video | funziona (YUV → GL) | 0.2.0: codifica diretta con ritorno automatico a YUV → GL, da provare |
+| Multi-frame | funziona, opzionale | 0.2.0: JPEG di sicurezza se l'elaborazione fallisce, da provare |
+| Sessioni sulla ROM del 31/10 | corretto in 0.1.1 | chiusura con onClosed prima di riconfigurare |
+| Impostazioni | pannello rapido + schermata completa | IT, EN, ES, FR, DE |
+| Test e CI | 7 test JVM, GitHub Actions | build + test a ogni push |
+
+### Da provare sul telefono (prossima occasione)
+
+1. **Video diretto**: registrare 10 s con la posteriore; nel log `direct video path works` o il
+   ritorno automatico a YUV → GL; controllare fps e file. Ripetere con time-lapse (deve usare GL).
+2. **JPEG di sicurezza**: scatto MF e uscita subito dall'app; deve restare la foto normale del HAL.
+3. **Bracketing in controluce** (finestra di giorno) e **tone mapping a due scale**.
+4. **Stabilizzazione** muovendo il telefono (va fatta dall'utente).
+5. **Analisi del mirino** spenta con MF e strumenti spenti (log `analysis=false`), accesa con MF.
+6. **Scorciatoie** del launcher (Video, Selfie) e **TalkBack** sui pulsanti.
+7. **Colori** contro il JPEG del HAL alla luce del giorno (fase 2, punto 5).
 
 ## Fase 1 — Consolidamento
 
@@ -32,7 +44,10 @@ nel README (o in un report), non quando il codice è su GitHub.
 - ✅ Scatti MF in serie: 5 consecutivi senza errori né processi uccisi (uno alla volta).
 - ✅ Uscita dall'app durante l'elaborazione: annullamento pulito.
 - ✅ EXIF nel JPEG MF.
-- ✅ Release con R8 provata sul telefono. Da fare: keystore dell'utente e release su GitHub.
+- ✅ Release con R8 provata sul telefono, firmata con la chiave di Arco; release v0.1.1 su GitHub.
+- ✅ (da provare) JPEG di sicurezza nel burst MF: se l'elaborazione fallisce o viene annullata
+  resta la foto normale del HAL.
+- ✅ (da provare) Analisi del mirino solo quando serve (MF o strumenti a schermo): meno consumo.
 
 **Uscita**: una giornata d'uso normale senza crash né scatti persi, log puliti.
 
@@ -70,9 +85,13 @@ In ordine di resa attesa:
 Oggi (6 fotogrammi): circa 2 s di fusione sovrapposta alla cattura, 1 s di rifinitura GPU,
 0,3 s di lettura, 0,8–1,4 s di codifica JPEG in background.
 
-- **Zero shutter lag** (studiato, non fatto): il RAW nelle richieste continue funziona senza
-  errori (prova del 31/10, di sera l'anteprima va comunque a 9–12 fps); manca una fusione che
-  normalizzi fotogrammi con esposizioni diverse (anteprima contro piano del burst).
+- **Zero shutter lag** (studiato, non fatto, decisione del 5/11): il RAW nelle richieste continue
+  funziona senza errori, ma tiene occupati ~40 MB per fotogramma e banda dell'ISP per tutto il
+  tempo del mirino, e il fotogramma "prima dello scatto" ha l'esposizione dell'anteprima, non
+  quella del burst. Il ritardo di scatto attuale è già breve (il burst parte subito se il fuoco
+  continuo è a fuoco): rimandato finché non serve davvero.
+- ✅ (da provare) **Video diretto**: la camera scrive nel codificatore senza copia GL sulle ROM con
+  il gralloc corretto; perdita di buffer o file vuoto → ritorno automatico a YUV → GL, ricordato.
 - ✅ **Codifica JPEG più rapida**: NV21 dalla GPU, 4 strisce in parallelo con l'encoder YUV di
   sistema unite con i restart marker: da 1,5 s a circa 0,2 s.
 - Shader di fusione: evitare gli array locali (spill dei registri sull'Adreno 430), calcoli
@@ -92,11 +111,12 @@ Oggi (6 fotogrammi): circa 2 s di fusione sovrapposta alla cattura, 1 s di rifin
   fare: vera super-risoluzione multi-fotogramma (kernel alla Wronski).
 - ✅ Avvio dalla schermata di blocco, camera e modalità ricordate, livella.
 - ✅ Impostazioni a schermo intero con sezioni scorrevoli, pannello rapido, accento Material You.
-- ✅ Istogramma, focus peaking, zebra. Da fare: livella.
+- ✅ Istogramma, focus peaking, zebra, livella.
+- ✅ (da provare) Scorciatoie del launcher (Video, Selfie), etichette per TalkBack.
+- ✅ Traduzioni: italiano, inglese, spagnolo, francese, tedesco.
 - ✅ Quadranti nel video verificati (ISO e tempo manuali applicati); ✅ blocco AE/AWB;
   ✅ time-lapse; stabilizzazione elettronica sperimentale (da provare in movimento).
 - ✅ Autoscatto e suono disattivabile. Da fare: scatto a raffica, posizione nell'EXIF.
-- Stabilizzazione video elettronica con il giroscopio.
 - Animazioni dei quadranti e aspetto rifiniti; icona e schermata impostazioni definitive.
 
 **Uscita**: ogni funzione con una voce nel README e una prova sul telefono.
