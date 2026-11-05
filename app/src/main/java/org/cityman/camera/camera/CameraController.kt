@@ -1242,8 +1242,27 @@ class CameraController(private val context: Context) {
         } finally {
             image.close()
         }
+        val safety = safetyJob
+        if (safety != null) {
+            safetyJob = null
+            when (safety.outcome) {
+                0 -> safety.safetyJpeg = bytes
+                2 -> saveJpegBytes(bytes, "safety")
+                else -> {}
+            }
+            return
+        }
         val current = shot
         val orientation = current?.orientation ?: 0
+        saveJpegBytes(bytes, "orientation $orientation")
+        if (current != null) {
+            synchronized(current) { current.jpegDone = true }
+            camHandler.post { if (shot === current) finishShot(force = false) }
+        }
+    }
+
+    /** io thread */
+    private fun saveJpegBytes(bytes: ByteArray, note: String) {
         val name = store.baseName("IMG")
         try {
             val uri = store.createImage("$name.jpg", "image/jpeg") ?: error("MediaStore insert failed")
@@ -1251,15 +1270,19 @@ class CameraController(private val context: Context) {
             store.publish(uri)
             val thumb = MediaStoreWriter.thumbnailFromJpeg(bytes)
             _state.update { it.copy(thumbnail = thumb ?: it.thumbnail, lastUri = uri, lastIsVideo = false) }
-            Log.i(TAG, "saved $uri (${bytes.size} bytes, orientation $orientation)")
+            Log.i(TAG, "saved $uri (${bytes.size} bytes, $note)")
         } catch (e: Exception) {
             Log.e(TAG, "save JPEG", e)
             report("Could not save the photo: ${e.message}")
         }
-        if (current != null) {
-            synchronized(current) { current.jpegDone = true }
-            camHandler.post { if (shot === current) finishShot(force = false) }
-        }
+    }
+
+    /** The merged photo could not be made: keep the HAL's JPEG instead, if it arrived. */
+    private fun fallBackToSafety(job: Burst) {
+        job.outcome = 2
+        val bytes = job.safetyJpeg ?: return
+        job.safetyJpeg = null
+        ioHandler.post { saveJpegBytes(bytes, "safety, multi-frame failed") }
     }
 
     private fun onRaw(reader: ImageReader) {
@@ -1345,7 +1368,14 @@ class CameraController(private val context: Context) {
         var finished = false
         @Volatile var expected = total
         @Volatile var firstResult: TotalCaptureResult? = null
+        /** The HAL's own JPEG taken at the end of the burst, kept until the merge succeeds. */
+        @Volatile var safetyJpeg: ByteArray? = null
+        /** 0 still merging, 1 merged photo saved, 2 merge failed or cancelled. */
+        @Volatile var outcome = 0
     }
+
+    /** Burst whose safety JPEG is still expected from the JPEG reader. */
+    @Volatile private var safetyJob: Burst? = null
 
     @Volatile private var burst: Burst? = null
 
@@ -1589,7 +1619,29 @@ class CameraController(private val context: Context) {
                 b.set(CaptureRequest.STATISTICS_LENS_SHADING_MAP_MODE, CameraMetadata.STATISTICS_LENS_SHADING_MAP_MODE_ON)
                 b.build()
             }
-            s.captureBurst(requests, burstCallback(job), camHandler)
+            // Safety net: one normal HAL JPEG at full exposure after the RAW frames.
+            val jpeg = jpegReader
+            val all = if (jpeg != null) {
+                val ev = 2.0.pow(controls.evSteps * c.evStep.toDouble())
+                val product = autoIso.toDouble() * autoExposureNs * ev
+                val expRange = c.exposureRange
+                val safeExp = (product / plan.iso).toLong().let { e ->
+                    if (expRange != null) e.coerceIn(expRange.lower, min(expRange.upper, max(plan.exposureNs, 4 * plan.exposureNs))) else e
+                }
+                val b = dev.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+                b.addTarget(jpeg.surface)
+                b.addTarget(preview)
+                applyControls(b, still = true)
+                b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
+                b.set(CaptureRequest.SENSOR_SENSITIVITY, plan.iso)
+                b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, safeExp)
+                b.set(CaptureRequest.SENSOR_FRAME_DURATION, safeExp)
+                if (awbAuto) b.set(CaptureRequest.CONTROL_AWB_LOCK, true)
+                b.setTag(SAFETY_TAG)
+                safetyJob = job
+                requests + b.build()
+            } else requests
+            s.captureBurst(all, burstCallback(job), camHandler)
         } catch (e: Exception) {
             Log.e(TAG, "burst capture", e)
             report("Capture failed: ${e.message}")
@@ -1610,6 +1662,7 @@ class CameraController(private val context: Context) {
         }
 
         override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            if (request.tag == SAFETY_TAG) return
             if (job.firstResult == null) {
                 job.firstResult = result
                 gpuHandler.post { maybeFinishBurst(job) }
@@ -1617,6 +1670,10 @@ class CameraController(private val context: Context) {
         }
 
         override fun onCaptureFailed(s: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
+            if (request.tag == SAFETY_TAG) {
+                safetyJob = null
+                return
+            }
             Log.w(TAG, "burst frame failed: reason ${failure.reason}")
             job.expected--
             gpuHandler.post { maybeFinishBurst(job) }
@@ -1653,7 +1710,8 @@ class CameraController(private val context: Context) {
         burst = null
         if (job.failed || result == null || job.received == 0) {
             processor.abort()
-            if (!job.cancelled) report("Multi-frame processing failed")
+            fallBackToSafety(job)
+            if (!job.cancelled) report("Multi-frame processing failed: the standard photo was saved instead")
             camHandler.post { if (shot?.burst == true) finishShot(force = true) }
             return
         }
@@ -1681,8 +1739,14 @@ class CameraController(private val context: Context) {
                 finishShot(force = false)
             }
         }
+        if (bitmap != null) {
+            job.outcome = 1
+            job.safetyJpeg = null
+        } else {
+            fallBackToSafety(job)
+        }
         ioHandler.post {
-            if (bitmap != null) saveFinished(bitmap, job.info) else report("Multi-frame processing failed")
+            if (bitmap != null) saveFinished(bitmap, job.info) else report("Multi-frame processing failed: the standard photo was saved instead")
         }
     }
 
@@ -1922,6 +1986,7 @@ class CameraController(private val context: Context) {
         private const val TAG = "ArcoCamera"
         private const val MAX_AUTO_SHUTTER_NS = 250_000_000L
         private const val MAX_BURST = 12
+        private const val SAFETY_TAG = "arco-safety-jpeg"
         private const val NIGHT_SHUTTER_NS = 500_000_000L
         private const val TRIPOD_RAD_S = 0.008
         private const val ACCEL_STILL_MS2 = 0.12f
