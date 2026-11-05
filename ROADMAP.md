@@ -11,7 +11,7 @@ nel README (o in un report), non quando il codice è su GitHub.
 
 ## Dove siamo (5/11)
 
-Ultima release provata: **v0.1.1** (GitHub, 31/10). Dopo: 0.2.0 compilata, **non provata**.
+Ultima release provata: **v0.1.1** (GitHub, 31/10). Dopo: 0.2.0 e 0.3.0 compilate e pubblicate, **non provate** sul telefono.
 
 | Area | Stato | Note |
 |---|---|---|
@@ -21,7 +21,8 @@ Ultima release provata: **v0.1.1** (GitHub, 31/10). Dopo: 0.2.0 compilata, **non
 | Multi-frame | funziona, opzionale | 0.2.0: JPEG di sicurezza se l'elaborazione fallisce, da provare |
 | Sessioni sulla ROM del 31/10 | corretto in 0.1.1 | chiusura con onClosed prima di riconfigurare |
 | Impostazioni | pannello rapido + schermata completa | IT, EN, ES, FR, DE |
-| Test e CI | 7 test JVM, GitHub Actions | build + test a ogni push |
+| Test e CI | 16 test JVM, GitHub Actions | build + test a ogni push; piano del burst estratto e testato |
+| Taratura | laboratorio Python (`tools/burst-lab`) | burst RAW salvati dall'app (opzione sviluppatore), prototipi misurati su dati sintetici |
 
 ### Da provare sul telefono (prossima occasione)
 
@@ -33,6 +34,13 @@ Ultima release provata: **v0.1.1** (GitHub, 31/10). Dopo: 0.2.0 compilata, **non
 5. **Analisi del mirino** spenta con MF e strumenti spenti (log `analysis=false`), accesa con MF.
 6. **Scorciatoie** del launcher (Video, Selfie) e **TalkBack** sui pulsanti.
 7. **Colori** contro il JPEG del HAL alla luce del giorno (fase 2, punto 5).
+8. **0.3.0**: scatto a raffica tenendo premuto (conteggio sopra lo scatto, nessun errore di
+   sessione), posizione nell'EXIF (permesso chiesto solo all'attivazione), copia del JPEG del HAL,
+   animazione dei quadranti.
+9. **Burst per il laboratorio**: con "Salva burst" attivo, 2-3 scene (luce piena, interno,
+   controluce) da scaricare con `adb pull`, poi `arco_lab.py develop --compare`: il risultato del
+   laboratorio deve essere vicino a `arco.jpg`. Sono i dati che servono per decidere i punti
+   sotto contrassegnati "laboratorio".
 
 ## Fase 1 — Consolidamento
 
@@ -64,16 +72,25 @@ In ordine di resa attesa:
 3. ✅ (da provare) **Scene in controluce**: sotto-esposizione adattiva dall'anteprima e 2
    fotogrammi a −2 EV in coda al burst, usati solo dove il riferimento è saturo (fotogrammi corti per le alte luci, lunghi per le ombre)
    fuso con exposure fusion, al posto della sola sotto-esposizione fissa di 0,7 EV.
-4. ½ **Tone mapping**: fatte due scale (fine vicino ai bordi, per meno aloni); da fare una vera
-   piramide laplaciana locale (meno aloni,
-   più profondità controllabile); un'opzione "naturale / vivace".
+4. ½ **Tone mapping**: fatte due scale (fine vicino ai bordi, per meno aloni). Laplaciana
+   locale (Paris 2011 / Aubry 2014) scritta nel laboratorio (`--tone laplacian`): da confrontare
+   a occhio sui burst reali prima di portarla in uno shader. Da fare: opzione "naturale / vivace".
 5. **Colore** (da fare con luce del giorno e scene ferme): confronto sistematico con il JPEG del HAL (calore, pelle, verdi); profilo
    colore proprio se serve; verifica della mappa di vignettatura sul bordo.
-6. **Fusione nel dominio delle frequenze** (Wiener per tile, come HDR+) o kernel robusti
-   alla Wronski, per ridurre ancora rumore e sdoppiamenti nelle zone in movimento.
+6. **Fusione nel dominio delle frequenze** (Wiener per tile, come HDR+): prototipo nel
+   laboratorio. Sul burst sintetico vale quanto la fusione attuale sulle texture (40,2 dB) e
+   +1,3 dB dove l'allineamento sbaglia (motivi ripetuti): guadagno piccolo per una FFT per tile
+   su GLES. Si porta nell'app solo se i burst reali mostrano sdoppiamenti.
 7. ✅ (prima versione) **Modalità notte**: 12–15 fotogrammi, rilevamento cavalletto (giroscopio fermo →
    esposizioni fino a 1 s).
-8. ✅ Pixel caldi (filtro sui vicini dello stesso colore). Da fare: dalla differenza tra fotogrammi; nitidezza tarata sulla risposta della lente.
+8. ✅ Pixel caldi (filtro sui vicini dello stesso colore). **Trovato col laboratorio (5/11)**: il
+   filtro attuale (shader PACK) scambia per pixel caldi i dettagli fini vicini al limite di
+   Nyquist (testo, fogliame, stelle): sul grafico sintetico cambia il 2,5% dei campioni,
+   18,8 dB contro 31,0 dB senza filtro. Il test incrociato con i vicini degli altri colori
+   (prototipo, `--hot cross`) tiene il dettaglio (27,0 dB) ma lascia passare più pixel caldi.
+   Da fare: verifica su burst reali (anche frontale, notte con stelle) e test temporale (i pixel
+   caldi restano fermi sul sensore, la scena si sposta col tremolio). Nitidezza tarata sulla
+   risposta della lente.
 
 **Uscita**: su 5 scene fisse (luce piena, interno, controluce, notte, ritratto) il risultato MF
 è migliore del JPEG del HAL in ognuna, confronto salvato nel repository.
@@ -107,8 +124,10 @@ Oggi (6 fotogrammi): circa 2 s di fusione sovrapposta alla cattura, 1 s di rifin
 ## Fase 4 — Funzioni dell'app
 
 - ✅ DNG anche in modalità MF: il RAW fuso.
-- ✅ Zoom: tasti 1×/2×/4× sopra lo scatto; il multi-frame ritaglia e raddoppia (bicubico). Da
-  fare: vera super-risoluzione multi-fotogramma (kernel alla Wronski).
+- ✅ Zoom: tasti 1×/2×/4× sopra lo scatto; il multi-frame ritaglia e raddoppia (bicubico).
+  Super-risoluzione multi-fotogramma provata nel laboratorio (campioni distribuiti con kernel
+  gaussiani): **peggio** del bicubico sulla fusione in tutte le zone provate. Servono kernel
+  anisotropi alla Wronski e un allineamento sub-pixel sulla griglia RAW intera: rimandata.
 - ✅ Avvio dalla schermata di blocco, camera e modalità ricordate, livella.
 - ✅ Impostazioni a schermo intero con sezioni scorrevoli, pannello rapido, accento Material You.
 - ✅ Istogramma, focus peaking, zebra, livella.
@@ -116,8 +135,12 @@ Oggi (6 fotogrammi): circa 2 s di fusione sovrapposta alla cattura, 1 s di rifin
 - ✅ Traduzioni: italiano, inglese, spagnolo, francese, tedesco.
 - ✅ Quadranti nel video verificati (ISO e tempo manuali applicati); ✅ blocco AE/AWB;
   ✅ time-lapse; stabilizzazione elettronica sperimentale (da provare in movimento).
-- ✅ Autoscatto e suono disattivabile. Da fare: scatto a raffica, posizione nell'EXIF.
-- Animazioni dei quadranti e aspetto rifiniti; icona e schermata impostazioni definitive.
+- ✅ Autoscatto e suono disattivabile. ✅ (da provare) Scatto a raffica tenendo premuto,
+  posizione nell'EXIF, copia del JPEG del HAL.
+- ✅ (da provare) Animazione di apertura dei quadranti. Da fare: icona definitiva.
+- ✅ Metadati F-Droid / IzzyOnDroid (`fastlane/`, inglese e italiano); bozza del post XDA
+  (`POST-XDA-ARCO.bbcode.txt` nella cartella del progetto ROM). Da fare: richiesta di
+  inclusione a IzzyOnDroid (decide l'utente).
 
 **Uscita**: ogni funzione con una voce nel README e una prova sul telefono.
 

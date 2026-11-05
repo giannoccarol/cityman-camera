@@ -33,6 +33,10 @@ libraries in use require).
   They only show or hide the measurements: the viewfinder analysis that sets the multi-frame
   exposure always runs (paused while a photo is taken).
 - Self-timer (3 or 10 s, a second press cancels), shutter sound on/off.
+- Rapid fire: hold the shutter to shoot standard photos one after another (up to 30), the count
+  shows above the shutter.
+- Optional location in the EXIF of JPEG and DNG (and in the video metadata), asked for only when
+  the option is turned on. Optional copy of the camera's own JPEG next to the multi-frame one.
 - Zoom buttons (1× · 2× · 4×) above the shutter (beside it in landscape), plus pinch.
 - Lock-screen launch: Arco handles the secure still-camera intent (power key double press, camera
   key while locked), shows over the keyguard and hides earlier photos; choose Arco once as the
@@ -65,6 +69,12 @@ libraries in use require).
   debug APK and runs the unit tests on every push.
 
 - Multi-frame RAW processing (see below), optional.
+- Developer option "Save bursts for tuning": the RAW frames of each multi-frame photo, with the
+  metadata of the merge, go to `Android/data/org.cityman.camera/files/bursts/`.
+  [tools/burst-lab](tools/burst-lab/README.md) develops them on a computer with the same steps
+  as the app, and holds prototypes (Wiener merge, local Laplacian tone mapping, super-resolution,
+  another hot pixel test) measured on synthetic bursts, not yet in the app.
+- F-Droid / IzzyOnDroid metadata in `fastlane/metadata/android` (English, Italian).
 
 Not in scope: Living Images and Movie Moments (dropped on request).
 
@@ -247,7 +257,10 @@ So far none has been: the multi-frame pipeline is written from the papers below.
   "High-quality linear interpolation for demosaicing of Bayer-patterned color images"
   (ICASSP 2004) — the demosaic kernels; **Frédo Durand, Julie Dorsey**, "Fast bilateral
   filtering for the display of high-dynamic-range images" (SIGGRAPH 2002) — base/detail local
-  tone mapping.
+  tone mapping. Burst lab prototypes only: **Sylvain Paris, Samuel W. Hasinoff, Jan Kautz**,
+  "Local Laplacian filters" (SIGGRAPH 2011) and **Mathieu Aubry et al.**, "Fast local Laplacian
+  filters" (ACM TOG 2014); the frequency-domain merge of Hasinoff et al. 2016; the sample
+  splatting of Wronski et al. 2019.
 - Other multi-frame projects looked at (nothing reused): **eszdman** —
   [PhotonCamera](https://github.com/eszdman/PhotonCamera) (GPL-3.0); **Timothy Brooks** —
   [hdr-plus](https://github.com/timothybrooks/hdr-plus) (Halide HDR+ implementation);
