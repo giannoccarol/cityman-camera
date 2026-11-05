@@ -326,12 +326,21 @@ class CameraController(private val context: Context) {
         if (_state.value.mode == CaptureMode.PHOTO) reconfigure()
     }
 
-    fun setAnalysisTools(histogram: Boolean, zebra: Boolean, peaking: Boolean) {
+    fun setAnalysisTools(histogram: Boolean, zebra: Boolean, peaking: Boolean) = camHandler.post {
+        val before = analysisNeeded(_state.value)
         prefs.edit().putBoolean("histogram", histogram).putBoolean("zebra", zebra).putBoolean("peaking", peaking).apply()
         _state.update { it.copy(showHistogram = histogram, zebra = zebra, peaking = peaking) }
         analyzer?.zebra = zebra
         analyzer?.peaking = peaking
+        // Add or drop the analysis stream when it starts or stops being needed.
+        if (before != analysisNeeded(_state.value) && _state.value.mode == CaptureMode.PHOTO) reconfigure()
     }
+
+    /**
+     * The viewfinder analysis stream costs power: it runs only for the multi-frame exposure plan
+     * or when histogram, zebra or peaking are shown.
+     */
+    private fun analysisNeeded(st: CameraState) = st.multiFrame || st.showHistogram || st.zebra || st.peaking
 
     fun setGrid(enabled: Boolean) {
         prefs.edit().putBoolean("grid", enabled).apply()
@@ -819,7 +828,7 @@ class CameraController(private val context: Context) {
             }
         }
         var withAnalysis = false
-        if (st.mode == CaptureMode.PHOTO && !analysisRefused) {
+        if (st.mode == CaptureMode.PHOTO && !analysisRefused && analysisNeeded(st)) {
             val preview = _state.value.previewSize
             val asz = preview?.let { c.analysisSize(it) }
             if (asz != null) {
@@ -833,6 +842,12 @@ class CameraController(private val context: Context) {
                 outputs += OutputConfiguration(a.reader.surface)
                 withAnalysis = true
             }
+        }
+        if (!withAnalysis && analyzer != null) {
+            // Not part of this session (old one already closed): release it so no request targets it.
+            analyzer?.release()
+            analyzer = null
+            _analysis.value = null
         }
         if (st.mode == CaptureMode.VIDEO) {
             val size = c.videoSize()
