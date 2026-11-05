@@ -87,4 +87,7 @@
     <string name="settings_keep_std">Guardar también la foto estándar</string>
     <string name="settings_keep_std_desc">Guarda también el JPEG del teléfono (_STD) junto a cada foto multi-frame, para comparar.</string>
     <string name="settings_rapid_desc">Mantén pulsado el obturador para la ráfaga: fotos estándar una tras otra, hasta 30, mientras pulses.</string>
+    <string name="group_developer">desarrollador</string>
+    <string name="settings_dev_bursts">Guardar ráfagas para ajustar</string>
+    <string name="settings_dev_bursts_desc">Guarda cada ráfaga multi-frame (RAW, metadatos, los dos JPEG) en la carpeta de la app, unos 40 MB por fotograma, para la herramienta del ordenador en tools/burst-lab.</string>
 </resources>

@@ -72,6 +72,8 @@ data class CameraState(
     /** The phone is resting: multi-frame photos use the long night exposures. */
     val still: Boolean = false,
     val showHistogram: Boolean = false,
+    /** Developer option: keep every RAW burst with its metadata, for tuning on a computer. */
+    val saveBursts: Boolean = false,
     /** Multi-frame: also keep the HAL's standard JPEG (`_STD`) next to the merged photo. */
     val keepStandard: Boolean = false,
     /** Write the phone's position into photos and videos. */
@@ -153,6 +155,7 @@ class CameraController(private val context: Context) {
             format = runCatching { PhotoFormat.valueOf(prefs.getString("format", null) ?: "FULL") }.getOrDefault(PhotoFormat.FULL),
             multiFrame = prefs.getBoolean("mf", false),
             showHistogram = prefs.getBoolean("histogram", false),
+            saveBursts = prefs.getBoolean("devBursts", false),
             keepStandard = prefs.getBoolean("mfKeepStd", false),
             saveLocation = prefs.getBoolean("location", false),
             timelapse = prefs.getInt("timelapse", 0),
@@ -596,6 +599,11 @@ class CameraController(private val context: Context) {
             Log.w(TAG, "persistent input surface", e)
             null
         }
+    }
+
+    fun setSaveBursts(on: Boolean) {
+        prefs.edit().putBoolean("devBursts", on).apply()
+        _state.update { it.copy(saveBursts = on) }
     }
 
     fun setKeepStandard(on: Boolean) {
@@ -1348,7 +1356,7 @@ class CameraController(private val context: Context) {
         if (safety != null) {
             safetyJob = null
             when (safety.outcome) {
-                0 -> safety.safetyJpeg = bytes
+                0 -> safety.safetyJpeg = bytes.also { b -> safety.dumpDir?.let { runCatching { java.io.File(it, "hal.jpg").writeBytes(b) } } }
                 2 -> saveJpegBytes(bytes, "safety")
                 else -> if (_state.value.keepStandard) saveJpegBytes(bytes, "standard", "_STD")
             }
@@ -1466,7 +1474,7 @@ class CameraController(private val context: Context) {
     // ---- multi-frame burst ------------------------------------------------------------
 
     /** What goes into the EXIF of a multi-frame photo. */
-    private data class ShotInfo(val iso: Int, val exposureNs: Long, val frames: Int, val fNumber: Float?, val focalMm: Float?)
+    internal data class ShotInfo(val iso: Int, val exposureNs: Long, val frames: Int, val fNumber: Float?, val focalMm: Float?)
 
     private class Burst(val total: Int, val setup: BurstSetup, val info: ShotInfo) {
         /** gpu thread */
@@ -1481,6 +1489,8 @@ class CameraController(private val context: Context) {
         @Volatile var safetyJpeg: ByteArray? = null
         /** 0 still merging, 1 merged photo saved, 2 merge failed or cancelled. */
         @Volatile var outcome = 0
+        /** Developer option: folder where this burst's RAW frames and metadata are kept. */
+        var dumpDir: java.io.File? = null
     }
 
     /** Burst whose safety JPEG is still expected from the JPEG reader. */
@@ -1652,6 +1662,9 @@ class CameraController(private val context: Context) {
             focalMm = c.chars[CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.firstOrNull()?.takeIf { it > 0f },
         )
         val job = Burst(plan.frames + plan.shortFrames, setup, info)
+        if (_state.value.saveBursts) {
+            job.dumpDir = context.getExternalFilesDir("bursts")?.let { java.io.File(it, store.baseName("burst")) }?.also { it.mkdirs() }
+        }
         Log.i(TAG, "burst ${plan.frames} × ISO ${plan.iso} ${plan.exposureNs / 1000} µs + ${plan.shortFrames} highlight frames, gain ${plan.gain}, zoom $zoom")
         gpuHandler.post {
             try {
@@ -1748,6 +1761,7 @@ class CameraController(private val context: Context) {
 
     /** gpu thread */
     private fun burstFrame(job: Burst, image: Image) {
+        job.dumpDir?.let { dir -> runCatching { BurstDump.writeFrame(dir, job.received, image) }.onFailure { Log.w(TAG, "dump frame", it) } }
         try {
             if (!job.failed && !job.finished && job.received < job.total) processor.addFrame(image)
         } catch (e: Throwable) {
@@ -1784,6 +1798,14 @@ class CameraController(private val context: Context) {
                 val c = caps
                 if (raw != null && c != null) ioHandler.post { saveMergedDng(c, result, raw, job.setup) }
             }
+            job.dumpDir?.let { dir ->
+                runCatching {
+                    BurstDump.writeMeta(
+                        dir, job.setup, plan = job.info, gains = gains, ccm = ccm,
+                        shading = result[CaptureResult.STATISTICS_LENS_SHADING_CORRECTION_MAP], received = job.received,
+                    )
+                }.onFailure { Log.w(TAG, "dump meta", it) }
+            }
             processor.finish(gains, ccm, result[CaptureResult.STATISTICS_LENS_SHADING_CORRECTION_MAP])
         } catch (e: Throwable) {
             Log.e(TAG, "finish burst", e)
@@ -1807,16 +1829,19 @@ class CameraController(private val context: Context) {
             fallBackToSafety(job)
         }
         ioHandler.post {
-            if (bitmap != null) saveFinished(bitmap, job.info) else report("Multi-frame processing failed: the standard photo was saved instead")
+            if (bitmap != null) saveFinished(bitmap, job.info, job.dumpDir) else report("Multi-frame processing failed: the standard photo was saved instead")
         }
     }
 
     /** io thread */
-    private fun saveFinished(img: org.cityman.camera.processing.FinishedImage, info: ShotInfo) {
+    private fun saveFinished(img: org.cityman.camera.processing.FinishedImage, info: ShotInfo, dumpDir: java.io.File? = null) {
         try {
             val uri = store.createImage(store.baseName("IMG") + "_MF.jpg", "image/jpeg") ?: error("MediaStore insert failed")
             val t0 = SystemClock.elapsedRealtime()
-            store.write(uri) { org.cityman.camera.processing.ParallelJpeg.encodeNv21(img.nv21, img.width, img.height, 95, it) }
+            val jpeg = java.io.ByteArrayOutputStream(img.width * img.height / 3)
+            org.cityman.camera.processing.ParallelJpeg.encodeNv21(img.nv21, img.width, img.height, 95, jpeg)
+            store.write(uri) { jpeg.writeTo(it) }
+            dumpDir?.let { runCatching { java.io.File(it, "arco.jpg").writeBytes(jpeg.toByteArray()) } }
             Log.i(TAG, "JPEG encode ${SystemClock.elapsedRealtime() - t0} ms")
             runCatching { writeExif(uri, img.width, img.height, info) }
                 .onFailure { Log.w(TAG, "EXIF", it) }

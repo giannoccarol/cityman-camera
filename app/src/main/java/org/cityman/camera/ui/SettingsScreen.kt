@@ -259,6 +259,10 @@ private fun GeneralPage(
         selected = state.galleryPackage?.takeIf { p -> apps.any { it.first == p } },
         onSelect = { controller.setGallery(it) },
     )
+    Group(stringResource(R.string.group_developer))
+    Toggle(stringResource(R.string.settings_dev_bursts), stringResource(R.string.settings_dev_bursts_desc), state.saveBursts) {
+        controller.setSaveBursts(it)
+    }
     Group(stringResource(R.string.group_about))
     val uri = LocalUriHandler.current
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {

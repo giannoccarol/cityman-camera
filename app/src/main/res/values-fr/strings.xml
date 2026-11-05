@@ -87,4 +87,7 @@
     <string name="settings_keep_std">Garder aussi la photo standard</string>
     <string name="settings_keep_std_desc">Enregistre aussi le JPEG du téléphone (_STD) à côté de chaque photo multi-image, pour comparer.</string>
     <string name="settings_rapid_desc">Maintenez le déclencheur pour la rafale : photos standard à la suite, jusqu\'à 30, tant que vous appuyez.</string>
+    <string name="group_developer">développeur</string>
+    <string name="settings_dev_bursts">Garder les rafales pour le réglage</string>
+    <string name="settings_dev_bursts_desc">Conserve chaque rafale multi-image (RAW, métadonnées, les deux JPEG) dans le dossier de l\'app, environ 40 Mo par image, pour l\'outil sur ordinateur dans tools/burst-lab.</string>
 </resources>

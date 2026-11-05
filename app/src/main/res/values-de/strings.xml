@@ -87,4 +87,7 @@
     <string name="settings_keep_std">Auch das Standardfoto behalten</string>
     <string name="settings_keep_std_desc">Speichert auch das JPEG des Telefons (_STD) neben jedem Multi-Frame-Foto, zum Vergleich.</string>
     <string name="settings_rapid_desc">Auslöser gedrückt halten für Serienbilder: Standardfotos nacheinander, bis zu 30, solange du drückst.</string>
+    <string name="group_developer">Entwickler</string>
+    <string name="settings_dev_bursts">Serien zum Abstimmen speichern</string>
+    <string name="settings_dev_bursts_desc">Behält jede Multi-Frame-Serie (RAW-Bilder, Metadaten, beide JPEGs) im App-Ordner, etwa 40 MB pro Bild, für das Computer-Werkzeug in tools/burst-lab.</string>
 </resources>

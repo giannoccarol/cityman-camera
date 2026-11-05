@@ -88,4 +88,7 @@
     <string name="settings_keep_std">Keep the standard photo too</string>
     <string name="settings_keep_std_desc">Saves the phone\'s own JPEG (_STD) next to each multi-frame photo, for comparison.</string>
     <string name="settings_rapid_desc">Hold the shutter for rapid fire: standard photos one after another, up to 30, while you keep pressing.</string>
+    <string name="group_developer">developer</string>
+    <string name="settings_dev_bursts">Save bursts for tuning</string>
+    <string name="settings_dev_bursts_desc">Keeps every multi-frame burst (RAW frames, metadata, both JPEGs) in the app folder, about 40 MB per frame, for the computer tool in tools/burst-lab.</string>
 </resources>
