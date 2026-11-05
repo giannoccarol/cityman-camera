@@ -176,6 +176,17 @@ private fun VideoPage(controller: CameraController, state: CameraState) {
     Toggle(stringResource(R.string.settings_stabilise), stringResource(R.string.settings_stabilise_desc), state.stabilise) {
         controller.setStabilise(it)
     }
+    Toggle(
+        stringResource(R.string.settings_direct_video),
+        stringResource(
+            when (state.directVideo) {
+                1 -> R.string.settings_direct_video_ok
+                0 -> R.string.settings_direct_video_failed
+                else -> R.string.settings_direct_video_desc
+            },
+        ),
+        state.directVideo != 0,
+    ) { controller.setDirectVideo(it) }
     Toggle(stringResource(R.string.settings_sound), stringResource(R.string.settings_sound_desc), state.shutterSound) {
         controller.setShutterSound(it)
     }

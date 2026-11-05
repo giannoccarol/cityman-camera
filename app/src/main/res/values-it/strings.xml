@@ -67,4 +67,8 @@
     <string name="settings_stabilise">Stabilizzazione</string>
     <string name="settings_stabilise_desc">Sperimentale: rende più fermo il video con il giroscopio, ritagliando il 10 % dell\'inquadratura.</string>
     <string name="video_info">H.264 con audio AAC: 1080p a 20 Mbit/s con la posteriore, 720p con la frontale. Il badge AE blocca esposizione e bilanciamento del bianco.</string>
+    <string name="settings_direct_video">Codifica diretta</string>
+    <string name="settings_direct_video_desc">La fotocamera scrive direttamente nel codificatore video: più fluido e leggero. Se questa ROM non lo permette, torna da solo al metodo compatibile. Non si usa con time-lapse e stabilizzazione.</string>
+    <string name="settings_direct_video_ok">Funziona su questa ROM: la fotocamera scrive direttamente nel codificatore video.</string>
+    <string name="settings_direct_video_failed">Non ha funzionato su questa ROM, i video passano dalla GPU. Accendi per riprovare.</string>
 </resources>

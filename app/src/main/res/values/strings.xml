@@ -68,4 +68,8 @@
     <string name="settings_stabilise">Stabilisation</string>
     <string name="settings_stabilise_desc">Experimental: steadies the video with the gyroscope, cropping 10 % of the frame.</string>
     <string name="video_info">H.264 with AAC sound: 1080p at 20 Mbit/s on the rear camera, 720p on the front. The AE badge locks exposure and white balance.</string>
+    <string name="settings_direct_video">Direct encoder</string>
+    <string name="settings_direct_video_desc">The camera writes straight into the video encoder: smoother and lighter. Falls back by itself if this ROM refuses it. Not used with time-lapse or stabilisation.</string>
+    <string name="settings_direct_video_ok">Works on this ROM: the camera writes straight into the video encoder.</string>
+    <string name="settings_direct_video_failed">Did not work on this ROM, videos go through the GPU. Turn on to try again.</string>
 </resources>

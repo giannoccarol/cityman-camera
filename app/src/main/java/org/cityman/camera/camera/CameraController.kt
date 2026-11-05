@@ -77,6 +77,11 @@ data class CameraState(
     /** Video: time-lapse factor (0 = off) and electronic stabilisation. */
     val timelapse: Int = 0,
     val stabilise: Boolean = false,
+    /**
+     * Camera → encoder without the GL copy: -1 not tried yet, 1 works, 0 failed on this ROM
+     * (then videos use the YUV → GL path).
+     */
+    val directVideo: Int = -1,
     /** Launched from the lock screen: only this session's photos may be shown. */
     val secure: Boolean = false,
     val level: Boolean = false,
@@ -144,6 +149,7 @@ class CameraController(private val context: Context) {
             showHistogram = prefs.getBoolean("histogram", false),
             timelapse = prefs.getInt("timelapse", 0),
             stabilise = prefs.getBoolean("stabilise", false),
+            directVideo = prefs.getInt("directVideo", -1),
             level = prefs.getBoolean("level", false),
             mode = if (prefs.getString("mode", null) == "VIDEO") CaptureMode.VIDEO else CaptureMode.PHOTO,
             cameraIndex = prefs.getInt("camera", 0),
@@ -275,6 +281,10 @@ class CameraController(private val context: Context) {
     }
 
     fun release() {
+        camHandler.post {
+            directSurface?.release()
+            directSurface = null
+        }
         gpuHandler.post { processor.release() }
         gpuThread.quitSafely()
         camThread.quitSafely()
@@ -487,14 +497,74 @@ class CameraController(private val context: Context) {
         startRepeating()
     }
 
-    fun setTimelapse(factor: Int) {
+    fun setTimelapse(factor: Int) = camHandler.post {
+        val before = wantsDirectVideo()
         prefs.edit().putInt("timelapse", factor).apply()
         _state.update { it.copy(timelapse = factor) }
+        // Time-lapse needs the GL path: rebuild the session when the path changes.
+        if (before != wantsDirectVideo() && _state.value.mode == CaptureMode.VIDEO && recorder == null) reconfigure()
     }
 
-    fun setStabilise(on: Boolean) {
+    fun setStabilise(on: Boolean) = camHandler.post {
+        val before = wantsDirectVideo()
         prefs.edit().putBoolean("stabilise", on).apply()
         _state.update { it.copy(stabilise = on) }
+        if (before != wantsDirectVideo() && _state.value.mode == CaptureMode.VIDEO && recorder == null) reconfigure()
+    }
+
+    /** Settings switch for the direct encoder path; turning it on tries it again. */
+    fun setDirectVideo(on: Boolean) = camHandler.post {
+        val v = if (on) -1 else 0
+        prefs.edit().putInt("directVideo", v).apply()
+        _state.update { it.copy(directVideo = v) }
+        if (_state.value.mode == CaptureMode.VIDEO && recorder == null) reconfigure()
+    }
+
+    /** Direct path for this session: allowed, and no per-frame GL work needed (time-lapse, stabilisation). */
+    private fun wantsDirectVideo(): Boolean {
+        val st = _state.value
+        return st.directVideo != 0 && st.timelapse <= 1 && !st.stabilise
+    }
+
+    private fun markDirectVideo(works: Boolean) {
+        val v = if (works) 1 else 0
+        if (_state.value.directVideo == v) return
+        prefs.edit().putInt("directVideo", v).apply()
+        _state.update { it.copy(directVideo = v) }
+        Log.i(TAG, "direct video path ${if (works) "works" else "failed: using YUV → GL"}")
+    }
+
+    /** Persistent encoder input surface for the direct path, sized by a throwaway recorder. */
+    private var directSurface: Surface? = null
+    private var directSurfaceSize: Size? = null
+    private var directInUse = false
+
+    private fun ensureDirectSurface(size: Size): Surface? {
+        if (directSurface != null && directSurfaceSize == size) return directSurface
+        directSurface?.release()
+        directSurface = null
+        return try {
+            val surface = android.media.MediaCodec.createPersistentInputSurface()
+            val dummy = java.io.File(context.cacheDir, "sizing.mp4")
+            MediaRecorder(context).apply {
+                setVideoSource(MediaRecorder.VideoSource.SURFACE)
+                setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
+                setOutputFile(dummy.absolutePath)
+                setVideoEncoder(MediaRecorder.VideoEncoder.H264)
+                setVideoSize(size.width, size.height)
+                setVideoFrameRate(30)
+                setInputSurface(surface)
+                prepare()
+                release()
+            }
+            dummy.delete()
+            directSurface = surface
+            directSurfaceSize = size
+            surface
+        } catch (e: Exception) {
+            Log.w(TAG, "persistent input surface", e)
+            null
+        }
     }
 
     fun setSystemAccent(on: Boolean) {
@@ -766,11 +836,18 @@ class CameraController(private val context: Context) {
         }
         if (st.mode == CaptureMode.VIDEO) {
             val size = c.videoSize()
-            val vp = video?.takeIf { it.size == size } ?: run {
-                video?.release()
-                VideoPipeline(size).also { video = it }
+            val direct = if (wantsDirectVideo()) ensureDirectSurface(size) else null
+            directInUse = direct != null
+            if (direct != null) {
+                // Camera writes straight into the encoder's input surface.
+                outputs += OutputConfiguration(direct)
+            } else {
+                val vp = video?.takeIf { it.size == size } ?: run {
+                    video?.release()
+                    VideoPipeline(size).also { video = it }
+                }
+                outputs += OutputConfiguration(vp.reader.surface)
             }
-            outputs += OutputConfiguration(vp.reader.surface)
         }
         Log.i(TAG, "session gen=$gen camera=${c.id} mode=${st.mode} preview=${_state.value.previewSize} raw=$withRaw analysis=$withAnalysis")
         _state.update { it.copy(previewRotation = previewRotation(c)) }
@@ -791,6 +868,10 @@ class CameraController(private val context: Context) {
                     recoveries = 0
                     startRepeating()
                     onReady?.invoke()
+                    if (pendingRestartRecording) {
+                        pendingRestartRecording = false
+                        if (_state.value.mode == CaptureMode.VIDEO) startRecording()
+                    }
                 }
 
                 override fun onConfigureFailed(s: CameraCaptureSession) {
@@ -844,7 +925,9 @@ class CameraController(private val context: Context) {
         val recording = recorder != null
         val b = dev.createCaptureRequest(if (recording) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW)
         b.addTarget(surface)
-        if (recording) video?.let { b.addTarget(it.reader.surface) }
+        if (recording) {
+            if (directInUse) directSurface?.let { b.addTarget(it) } else video?.let { b.addTarget(it.reader.surface) }
+        }
         if (_state.value.mode == CaptureMode.PHOTO && session != null) analyzer?.let { b.addTarget(it.reader.surface) }
         if (zslProbe && _state.value.mode == CaptureMode.PHOTO) rawReader?.let { b.addTarget(it.surface) }
         applyControls(b, still = false)
@@ -1012,6 +1095,10 @@ class CameraController(private val context: Context) {
     private var probeSum = 0L
 
     private val repeatingCallback = object : CameraCaptureSession.CaptureCallback() {
+        override fun onCaptureBufferLost(s: CameraCaptureSession, request: CaptureRequest, target: Surface, frameNumber: Long) {
+            if (target === directSurface) onDirectBufferLost()
+        }
+
         override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
             val ts = result[CaptureResult.SENSOR_TIMESTAMP] ?: 0L
             if (probeLast != 0L) { probeSum += ts - probeLast; probeCount++ }
@@ -1659,9 +1746,11 @@ class CameraController(private val context: Context) {
 
     private fun startRecording() {
         val c = caps ?: return
-        val vp = video ?: return
+        val direct = if (directInUse) directSurface else null
+        val vp = video
+        if (direct == null && vp == null) return
         if (session == null || recorder != null) return
-        val size = vp.size
+        val size = if (direct != null) directSurfaceSize ?: c.videoSize() else vp!!.size
         val audio = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val uri = store.createVideo(store.baseName("VID") + ".mp4") ?: run {
             report("Could not create the video file")
@@ -1687,9 +1776,10 @@ class CameraController(private val context: Context) {
                 r.setAudioSamplingRate(48_000)
             }
             r.setOrientationHint(jpegOrientation(c))
+            if (direct != null) r.setInputSurface(direct)
             r.prepare()
             r.start()
-            vp.attach(
+            if (direct == null) vp!!.attach(
                 r.surface,
                 VideoPipeline.Options(
                     every = _state.value.timelapse.coerceAtLeast(1),
@@ -1700,7 +1790,7 @@ class CameraController(private val context: Context) {
             )
         } catch (e: Exception) {
             Log.e(TAG, "start recording", e)
-            runCatching { vp.detach() }
+            runCatching { vp?.detach() }
             r.release()
             fd.close()
             store.discard(uri)
@@ -1710,6 +1800,8 @@ class CameraController(private val context: Context) {
         recorder = r
         recordingUri = uri
         recordingFd = fd
+        directLost = false
+        recordingDirect = direct != null
         startRepeating()
         if (_state.value.shutterSound) sound.play(MediaActionSound.START_VIDEO_RECORDING)
         _state.update { it.copy(recording = true, recordingSince = SystemClock.elapsedRealtime()) }
@@ -1721,8 +1813,8 @@ class CameraController(private val context: Context) {
         recorder = null
         // Stop sending frames to the recorder before stopping it.
         startRepeating()
-        runCatching { video?.detach() }
-        val drawn = video?.framesDrawn ?: 0
+        if (!recordingDirect) runCatching { video?.detach() }
+        val drawn = if (recordingDirect) -1 else video?.framesDrawn ?: 0
         val uri = recordingUri
         val ok = try {
             r.stop()
@@ -1738,7 +1830,7 @@ class CameraController(private val context: Context) {
         if (_state.value.shutterSound) sound.play(MediaActionSound.STOP_VIDEO_RECORDING)
         _state.update { it.copy(recording = false) }
         if (uri != null) {
-            if (ok) {
+            if (ok && !directLost) {
                 store.publish(uri)
                 Log.i(TAG, "saved $uri (video, $drawn frames)")
                 ioHandler.post {
@@ -1747,10 +1839,38 @@ class CameraController(private val context: Context) {
                 }
             } else {
                 store.discard(uri)
-                report("The video was too short and was not saved")
+                if (recordingDirect && !directLost) {
+                    // No frame reached the encoder: the direct path does not work here.
+                    markDirectVideo(false)
+                    report("The video could not be recorded; the next one uses the compatible mode")
+                    if (recorder == null && _state.value.mode == CaptureMode.VIDEO) reconfigure()
+                } else if (!directLost) {
+                    report("The video was too short and was not saved")
+                }
             }
+            if (ok && recordingDirect && !directLost) markDirectVideo(true)
         }
+        recordingDirect = false
     }
+
+    private var recordingDirect = false
+    private var directLost = false
+
+    /**
+     * cam thread: the camera could not hand a buffer to the encoder (the gralloc of some builds
+     * refuses camera → encoder buffers). Drop this file, switch to the GL path and start again.
+     */
+    private fun onDirectBufferLost() {
+        if (!recordingDirect || directLost) return
+        directLost = true
+        Log.w(TAG, "encoder buffer lost on the direct path: switching to YUV → GL")
+        markDirectVideo(false)
+        stopRecording(restartPreview = false)
+        pendingRestartRecording = true
+        reconfigure()
+    }
+
+    private var pendingRestartRecording = false
 
     // ---- helpers ------------------------------------------------------------------------
 
