@@ -82,4 +82,9 @@
     <string name="a11y_ae">Blocco esposizione</string>
     <string name="shortcut_video">Video</string>
     <string name="shortcut_selfie">Selfie</string>
+    <string name="settings_location">Salva posizione</string>
+    <string name="settings_location_desc">Scrive dove è stata scattata la foto o girato il video (posizione GPS o di rete). Chiede il permesso di posizione.</string>
+    <string name="settings_keep_std">Tieni anche la foto standard</string>
+    <string name="settings_keep_std_desc">Salva anche il JPEG del telefono (_STD) accanto a ogni foto multi-frame, per confronto.</string>
+    <string name="settings_rapid_desc">Tieni premuto lo scatto per la raffica: foto standard una dopo l\'altra, fino a 30, finché premi.</string>
 </resources>

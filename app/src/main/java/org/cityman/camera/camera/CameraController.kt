@@ -72,6 +72,12 @@ data class CameraState(
     /** The phone is resting: multi-frame photos use the long night exposures. */
     val still: Boolean = false,
     val showHistogram: Boolean = false,
+    /** Multi-frame: also keep the HAL's standard JPEG (`_STD`) next to the merged photo. */
+    val keepStandard: Boolean = false,
+    /** Write the phone's position into photos and videos. */
+    val saveLocation: Boolean = false,
+    /** Photos taken so far while the shutter is held (rapid fire), 0 when not shooting. */
+    val rapidCount: Int = 0,
     /** Exposure and white balance locked (auto exposure keeps its current values). */
     val aeLock: Boolean = false,
     /** Video: time-lapse factor (0 = off) and electronic stabilisation. */
@@ -147,6 +153,8 @@ class CameraController(private val context: Context) {
             format = runCatching { PhotoFormat.valueOf(prefs.getString("format", null) ?: "FULL") }.getOrDefault(PhotoFormat.FULL),
             multiFrame = prefs.getBoolean("mf", false),
             showHistogram = prefs.getBoolean("histogram", false),
+            keepStandard = prefs.getBoolean("mfKeepStd", false),
+            saveLocation = prefs.getBoolean("location", false),
             timelapse = prefs.getInt("timelapse", 0),
             stabilise = prefs.getBoolean("stabilise", false),
             directVideo = prefs.getInt("directVideo", -1),
@@ -265,6 +273,7 @@ class CameraController(private val context: Context) {
     fun start() {
         started = true
         startGyro()
+        if (_state.value.saveLocation) startLocation()
         if (_state.value.level) startTilt()
         _state.update { it.copy(cameraCount = cameraIds.size) }
         camHandler.post { openCamera() }
@@ -273,7 +282,9 @@ class CameraController(private val context: Context) {
 
     fun stop() {
         started = false
+        rapid = false
         stopGyro()
+        stopLocation()
         stopTilt()
         wantedSize = null
         configuredGen = -1
@@ -585,6 +596,69 @@ class CameraController(private val context: Context) {
             Log.w(TAG, "persistent input surface", e)
             null
         }
+    }
+
+    fun setKeepStandard(on: Boolean) {
+        prefs.edit().putBoolean("mfKeepStd", on).apply()
+        _state.update { it.copy(keepStandard = on) }
+    }
+
+    // ---- location (optional) -----------------------------------------------------------
+
+    private val locationManager = context.getSystemService(android.location.LocationManager::class.java)
+    @Volatile private var lastLocation: android.location.Location? = null
+    private val locationListener = android.location.LocationListener { lastLocation = it }
+
+    /** Turns location tagging on or off (the activity asks for the permission first). */
+    fun setSaveLocation(on: Boolean) {
+        prefs.edit().putBoolean("location", on).apply()
+        _state.update { it.copy(saveLocation = on) }
+        if (on && started) startLocation() else stopLocation()
+    }
+
+    private fun startLocation() {
+        val lm = locationManager ?: return
+        val fine = context.checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        val coarse = context.checkSelfPermission(Manifest.permission.ACCESS_COARSE_LOCATION) == PackageManager.PERMISSION_GRANTED
+        if (!fine && !coarse) return
+        try {
+            val providers = listOf(android.location.LocationManager.GPS_PROVIDER, android.location.LocationManager.NETWORK_PROVIDER)
+                .filter { lm.isProviderEnabled(it) && (fine || it == android.location.LocationManager.NETWORK_PROVIDER) }
+            for (p in providers) {
+                lm.getLastKnownLocation(p)?.let { if (lastLocation == null || it.time > lastLocation!!.time) lastLocation = it }
+                lm.requestLocationUpdates(p, 10_000L, 10f, locationListener, Looper.getMainLooper())
+            }
+        } catch (e: SecurityException) {
+            Log.w(TAG, "location", e)
+        }
+    }
+
+    private fun stopLocation() {
+        runCatching { locationManager?.removeUpdates(locationListener) }
+    }
+
+    /** A recent position, if tagging is on (older than 10 minutes is dropped). */
+    private fun currentLocation(): android.location.Location? {
+        if (!_state.value.saveLocation) return null
+        val l = lastLocation ?: return null
+        val ageMs = (android.os.SystemClock.elapsedRealtimeNanos() - l.elapsedRealtimeNanos) / 1_000_000
+        return if (ageMs < 10 * 60_000) l else null
+    }
+
+    // ---- rapid fire: standard photos for as long as the shutter is held -----------------
+
+    @Volatile private var rapid = false
+
+    fun startRapidFire() = camHandler.post {
+        if (_state.value.mode != CaptureMode.PHOTO || rapid) return@post
+        rapid = true
+        _state.update { it.copy(rapidCount = 0) }
+        if (shot == null) takePicture()
+    }
+
+    fun stopRapidFire() = camHandler.post {
+        rapid = false
+        camHandler.postDelayed({ if (!rapid) _state.update { it.copy(rapidCount = 0) } }, 800)
     }
 
     fun setSystemAccent(on: Boolean) {
@@ -1065,6 +1139,7 @@ class CameraController(private val context: Context) {
             b.set(CaptureRequest.EDGE_MODE, CameraMetadata.EDGE_MODE_HIGH_QUALITY)
             b.set(CaptureRequest.JPEG_QUALITY, 95.toByte())
             b.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation(c))
+            currentLocation()?.let { b.set(CaptureRequest.JPEG_GPS_LOCATION, it) }
         }
     }
 
@@ -1182,11 +1257,12 @@ class CameraController(private val context: Context) {
             if (SystemClock.elapsedRealtime() - current.startedAt < 30_000) return
             finishShot(force = true)
         }
-        val mf = _state.value.multiFrame && rawReader != null
-        shot = Shot(jpegOrientation(c), rawReader != null && !mf, SystemClock.elapsedRealtime(), mf)
+        // Rapid fire takes standard photos (no multi-frame, no DNG), focusing only before the first.
+        val mf = _state.value.multiFrame && rawReader != null && !rapid
+        shot = Shot(jpegOrientation(c), rawReader != null && !mf && !rapid, SystemClock.elapsedRealtime(), mf)
         _state.update { it.copy(capturing = true) }
         analyzer?.paused = true
-        val needAf = c.hasAutoFocus && controls.focusDiopters == null && focusRegion == null &&
+        val needAf = !(rapid && _state.value.rapidCount > 0) && c.hasAutoFocus && controls.focusDiopters == null && focusRegion == null &&
             afState != CaptureResult.CONTROL_AF_STATE_PASSIVE_FOCUSED &&
             afState != CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED
         if (needAf) {
@@ -1274,7 +1350,7 @@ class CameraController(private val context: Context) {
             when (safety.outcome) {
                 0 -> safety.safetyJpeg = bytes
                 2 -> saveJpegBytes(bytes, "safety")
-                else -> {}
+                else -> if (_state.value.keepStandard) saveJpegBytes(bytes, "standard", "_STD")
             }
             return
         }
@@ -1288,8 +1364,8 @@ class CameraController(private val context: Context) {
     }
 
     /** io thread */
-    private fun saveJpegBytes(bytes: ByteArray, note: String) {
-        val name = store.baseName("IMG")
+    private fun saveJpegBytes(bytes: ByteArray, note: String, suffix: String = "") {
+        val name = store.baseName("IMG") + suffix
         try {
             val uri = store.createImage("$name.jpg", "image/jpeg") ?: error("MediaStore insert failed")
             store.write(uri) { it.write(bytes) }
@@ -1345,6 +1421,7 @@ class CameraController(private val context: Context) {
                 val uri = store.createImage(store.baseName("IMG") + ".dng", "image/x-adobe-dng") ?: error("MediaStore insert failed")
                 DngCreator(c.chars, result).use { dng ->
                     dng.setOrientation(exifOrientation(current.orientation))
+                    currentLocation()?.let { dng.setLocation(it) }
                     store.write(uri) { dng.writeImage(it, raw) }
                 }
                 store.publish(uri)
@@ -1378,6 +1455,12 @@ class CameraController(private val context: Context) {
         waitingAf = false
         camHandler.removeCallbacks(afTimeout)
         _state.update { it.copy(capturing = false, processing = false) }
+        // Rapid fire: next photo as soon as this one is saved, up to 30.
+        if (rapid && !force && !current.burst) {
+            val n = _state.value.rapidCount + 1
+            _state.update { it.copy(rapidCount = n) }
+            if (n < MAX_RAPID) camHandler.post { if (rapid) takePicture() } else rapid = false
+        }
     }
 
     // ---- multi-frame burst ------------------------------------------------------------
@@ -1767,6 +1850,8 @@ class CameraController(private val context: Context) {
         }
         if (bitmap != null) {
             job.outcome = 1
+            val std = job.safetyJpeg
+            if (std != null && _state.value.keepStandard) ioHandler.post { saveJpegBytes(std, "standard", "_STD") }
             job.safetyJpeg = null
         } else {
             fallBackToSafety(job)
@@ -1800,6 +1885,7 @@ class CameraController(private val context: Context) {
             val uri = store.createImage(store.baseName("IMG") + "_MF.dng", "image/x-adobe-dng") ?: error("MediaStore insert failed")
             DngCreator(c.chars, result).use { dng ->
                 dng.setOrientation(exifOrientation(setup.rotation))
+                currentLocation()?.let { dng.setLocation(it) }
                 store.write(uri) { dng.writeByteBuffer(it, Size(setup.width, setup.height), raw, 0) }
             }
             store.publish(uri)
@@ -1807,6 +1893,26 @@ class CameraController(private val context: Context) {
         } catch (e: Exception) {
             Log.e(TAG, "save merged DNG", e)
             report("Could not save the DNG: ${e.message}")
+        }
+    }
+
+    /** EXIF GPS tags (degrees, minutes, seconds as rationals). */
+    private fun writeGps(exif: ExifInterface, l: android.location.Location) {
+        fun dms(v: Double): String {
+            val a = kotlin.math.abs(v)
+            val d = a.toInt()
+            val mFull = (a - d) * 60
+            val m = mFull.toInt()
+            val sec = ((mFull - m) * 60 * 1000).roundToLong()
+            return "$d/1,$m/1,$sec/1000"
+        }
+        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE, dms(l.latitude))
+        exif.setAttribute(ExifInterface.TAG_GPS_LATITUDE_REF, if (l.latitude >= 0) "N" else "S")
+        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE, dms(l.longitude))
+        exif.setAttribute(ExifInterface.TAG_GPS_LONGITUDE_REF, if (l.longitude >= 0) "E" else "W")
+        if (l.hasAltitude()) {
+            exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE, "${(kotlin.math.abs(l.altitude) * 100).roundToLong()}/100")
+            exif.setAttribute(ExifInterface.TAG_GPS_ALTITUDE_REF, if (l.altitude >= 0) "0" else "1")
         }
     }
 
@@ -1828,6 +1934,7 @@ class CameraController(private val context: Context) {
             exif.setAttribute(ExifInterface.TAG_EXPOSURE_TIME, String.format(java.util.Locale.US, "%.6f", info.exposureNs / 1e9))
             info.fNumber?.let { exif.setAttribute(ExifInterface.TAG_F_NUMBER, String.format(java.util.Locale.US, "%.1f", it)) }
             info.focalMm?.let { exif.setAttribute(ExifInterface.TAG_FOCAL_LENGTH, "${(it * 100).roundToInt()}/100") }
+            currentLocation()?.let { writeGps(exif, it) }
             exif.saveAttributes()
         }
     }
@@ -1866,6 +1973,7 @@ class CameraController(private val context: Context) {
                 r.setAudioSamplingRate(48_000)
             }
             r.setOrientationHint(jpegOrientation(c))
+            currentLocation()?.let { r.setLocation(it.latitude.toFloat(), it.longitude.toFloat()) }
             if (direct != null) r.setInputSurface(direct)
             r.prepare()
             r.start()
@@ -2012,6 +2120,7 @@ class CameraController(private val context: Context) {
         private const val TAG = "ArcoCamera"
         private const val MAX_AUTO_SHUTTER_NS = 250_000_000L
         private const val MAX_BURST = 12
+        private const val MAX_RAPID = 30
         private const val SAFETY_TAG = "arco-safety-jpeg"
         private const val NIGHT_SHUTTER_NS = 500_000_000L
         private const val TRIPOD_RAD_S = 0.008

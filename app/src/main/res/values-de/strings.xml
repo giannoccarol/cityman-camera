@@ -82,4 +82,9 @@
     <string name="a11y_ae">Belichtungssperre</string>
     <string name="shortcut_video">Video</string>
     <string name="shortcut_selfie">Selfie</string>
+    <string name="settings_location">Standort speichern</string>
+    <string name="settings_location_desc">Speichert, wo das Foto oder Video aufgenommen wurde (GPS- oder Netzwerkposition). Fragt nach der Standortberechtigung.</string>
+    <string name="settings_keep_std">Auch das Standardfoto behalten</string>
+    <string name="settings_keep_std_desc">Speichert auch das JPEG des Telefons (_STD) neben jedem Multi-Frame-Foto, zum Vergleich.</string>
+    <string name="settings_rapid_desc">Auslöser gedrückt halten für Serienbilder: Standardfotos nacheinander, bis zu 30, solange du drückst.</string>
 </resources>

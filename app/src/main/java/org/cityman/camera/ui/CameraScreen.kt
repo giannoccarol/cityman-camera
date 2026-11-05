@@ -68,6 +68,8 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.onClick
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.nativeCanvas
@@ -102,6 +104,7 @@ fun CameraScreen(
     iconRotation: Float,
     onOpenMedia: (Uri, Boolean) -> Unit,
     galleryApps: () -> List<Pair<String, String>> = { emptyList() },
+    onSaveLocation: (Boolean) -> Unit = {},
 ) {
     val st by controller.state.collectAsStateWithLifecycle()
     var openDial by remember { mutableStateOf<DialKind?>(null) }
@@ -200,10 +203,14 @@ fun CameraScreen(
             if (st.mode == CaptureMode.VIDEO && st.timelapse > 1) Badge("${st.timelapse}×")
             if (st.multiFrame && st.still && st.mode == CaptureMode.PHOTO) Badge(stringResource(R.string.badge_still))
             if (st.focusPoint != null) Badge(stringResource(R.string.badge_locked))
+            if (st.rapidCount > 0) Badge("×${st.rapidCount}")
         }
 
-        // Arc dial around the shutter button.
-        val dial = openDial
+        // Arc dial around the shutter button, fading and growing in from the shutter.
+        var lastDial by remember { mutableStateOf<DialKind?>(null) }
+        if (openDial != null) lastDial = openDial
+        val dialShown by animateFloatAsState(if (openDial != null) 1f else 0f, tween(180), label = "dial")
+        val dial = if (dialShown > 0.01f) lastDial else null
         val caps = st.caps
         if (dial != null && caps != null) {
             val spec = remember(dial, caps.id) { Dials.spec(dial, caps) }
@@ -223,7 +230,13 @@ fun CameraScreen(
                     sweep = if (portrait) 180f else -180f,
                     onIndex = { i -> controller.setControls(Dials.apply(dial, spec.stops[i], st.controls)) },
                     onDismiss = { openDial = null },
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().graphicsLayer {
+                        alpha = dialShown
+                        val k = 0.85f + 0.15f * dialShown
+                        scaleX = k
+                        scaleY = k
+                        transformOrigin = androidx.compose.ui.graphics.TransformOrigin(center.x / size.width, center.y / size.height)
+                    },
                 )
             }
         }
@@ -251,6 +264,8 @@ fun CameraScreen(
             dialOpen = openDial != null,
             rotation = rotation,
             onShutter = { controller.shutter() },
+            onHoldStart = { controller.startRapidFire() },
+            onHoldEnd = { controller.stopRapidFire() },
             onSwitch = { controller.switchCamera() },
             onMode = { controller.setMode(if (st.mode == CaptureMode.PHOTO) CaptureMode.VIDEO else CaptureMode.PHOTO) },
             onGallery = { st.lastUri?.let { onOpenMedia(it, st.lastIsVideo) } },
@@ -288,7 +303,7 @@ fun CameraScreen(
         }
 
         if (showFullSettings) {
-            SettingsScreen(controller, st, galleryApps, onClose = { showFullSettings = false })
+            SettingsScreen(controller, st, galleryApps, onSaveLocation = onSaveLocation, onClose = { showFullSettings = false })
         }
 
         st.message?.let { msg ->
@@ -554,6 +569,8 @@ private fun ShutterBar(
     dialOpen: Boolean,
     rotation: Float,
     onShutter: () -> Unit,
+    onHoldStart: () -> Unit = {},
+    onHoldEnd: () -> Unit = {},
     onSwitch: () -> Unit,
     onMode: () -> Unit,
     onGallery: () -> Unit,
@@ -585,9 +602,11 @@ private fun ShutterBar(
         ShutterButton(
             mode = state.mode,
             recording = state.recording,
-            busy = state.capturing,
+            busy = state.capturing && state.rapidCount == 0,
             processing = state.processing,
             onClick = onShutter,
+            onHoldStart = onHoldStart,
+            onHoldEnd = onHoldEnd,
             modifier = Modifier.align(Alignment.Center),
         )
         if (others) {
@@ -615,10 +634,24 @@ private fun ShutterBar(
 }
 
 @Composable
-private fun ShutterButton(mode: CaptureMode, recording: Boolean, busy: Boolean, processing: Boolean, onClick: () -> Unit, modifier: Modifier) {
+private fun ShutterButton(
+    mode: CaptureMode,
+    recording: Boolean,
+    busy: Boolean,
+    processing: Boolean,
+    onClick: () -> Unit,
+    onHoldStart: () -> Unit,
+    onHoldEnd: () -> Unit,
+    modifier: Modifier,
+) {
+    val holdStart by rememberUpdatedState(onHoldStart)
+    val holdEnd by rememberUpdatedState(onHoldEnd)
+    val click by rememberUpdatedState(onClick)
+    val canHold = mode == CaptureMode.PHOTO
     val spin = rememberInfiniteTransition(label = "processing")
     val angle by spin.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "spin")
     val interaction = remember { MutableInteractionSource() }
+    var holding by remember { mutableStateOf(false) }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.9f else 1f, tween(90), label = "shutterScale")
     val desc = stringResource(
@@ -633,8 +666,32 @@ private fun ShutterButton(mode: CaptureMode, recording: Boolean, busy: Boolean, 
             .size(80.dp)
             .scale(scale)
             .clip(CircleShape)
-            .clickable(interactionSource = interaction, indication = null, enabled = !busy, onClick = onClick)
-            .semantics { contentDescription = desc; role = Role.Button },
+            .pointerInput(busy, canHold) {
+                // Tap: one photo (or start/stop video). Hold in photo mode: rapid fire until released.
+                detectTapGestures(
+                    onPress = {
+                        val press = androidx.compose.foundation.interaction.PressInteraction.Press(it)
+                        interaction.emit(press)
+                        val released = tryAwaitRelease()
+                        interaction.emit(
+                            if (released) androidx.compose.foundation.interaction.PressInteraction.Release(press)
+                            else androidx.compose.foundation.interaction.PressInteraction.Cancel(press),
+                        )
+                        if (holding) {
+                            holding = false
+                            holdEnd()
+                        }
+                    },
+                    onTap = { if (!busy) click() },
+                    onLongPress = {
+                        if (canHold && !busy) {
+                            holding = true
+                            holdStart()
+                        }
+                    },
+                )
+            }
+            .semantics { contentDescription = desc; role = Role.Button; onClick { if (!busy) click(); true } },
     ) {
         val r = size.minDimension / 2
         drawCircle(Color.White, radius = r - 2.dp.toPx(), style = Stroke(4.dp.toPx()))

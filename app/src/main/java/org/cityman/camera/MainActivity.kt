@@ -80,6 +80,24 @@ class MainActivity : ComponentActivity() {
         hasCamera = granted(Manifest.permission.CAMERA)
     }
 
+    /** Location for "Save location", asked only when the user turns it on. */
+    private val locationPermission = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+        val ok = granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION)
+        controller.setSaveLocation(ok)
+    }
+
+    private fun setSaveLocation(on: Boolean) {
+        if (!on) {
+            controller.setSaveLocation(false)
+            return
+        }
+        if (granted(Manifest.permission.ACCESS_FINE_LOCATION) || granted(Manifest.permission.ACCESS_COARSE_LOCATION)) {
+            controller.setSaveLocation(true)
+        } else {
+            locationPermission.launch(arrayOf(Manifest.permission.ACCESS_FINE_LOCATION, Manifest.permission.ACCESS_COARSE_LOCATION))
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         WindowCompat.setDecorFitsSystemWindows(window, false)
@@ -102,7 +120,7 @@ class MainActivity : ComponentActivity() {
 
         setContent {
             if (hasCamera) {
-                CameraScreen(controller, iconRotation, ::openMedia, ::galleryApps)
+                CameraScreen(controller, iconRotation, ::openMedia, ::galleryApps, ::setSaveLocation)
             } else {
                 PermissionScreen { requestPermissions() }
             }

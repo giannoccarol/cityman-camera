@@ -82,4 +82,9 @@
     <string name="a11y_ae">Verrouillage de l\'exposition</string>
     <string name="shortcut_video">Vidéo</string>
     <string name="shortcut_selfie">Selfie</string>
+    <string name="settings_location">Enregistrer la position</string>
+    <string name="settings_location_desc">Indique où la photo ou la vidéo a été prise (position GPS ou réseau). Demande l\'autorisation de localisation.</string>
+    <string name="settings_keep_std">Garder aussi la photo standard</string>
+    <string name="settings_keep_std_desc">Enregistre aussi le JPEG du téléphone (_STD) à côté de chaque photo multi-image, pour comparer.</string>
+    <string name="settings_rapid_desc">Maintenez le déclencheur pour la rafale : photos standard à la suite, jusqu\'à 30, tant que vous appuyez.</string>
 </resources>

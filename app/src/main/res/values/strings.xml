@@ -83,4 +83,9 @@
     <string name="a11y_ae">Exposure lock</string>
     <string name="shortcut_video">Video</string>
     <string name="shortcut_selfie">Selfie</string>
+    <string name="settings_location">Save location</string>
+    <string name="settings_location_desc">Writes where the photo or video was taken (GPS or network position). Asks for the location permission.</string>
+    <string name="settings_keep_std">Keep the standard photo too</string>
+    <string name="settings_keep_std_desc">Saves the phone\'s own JPEG (_STD) next to each multi-frame photo, for comparison.</string>
+    <string name="settings_rapid_desc">Hold the shutter for rapid fire: standard photos one after another, up to 30, while you keep pressing.</string>
 </resources>

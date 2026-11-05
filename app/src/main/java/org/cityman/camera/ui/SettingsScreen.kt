@@ -59,6 +59,7 @@ fun SettingsScreen(
     state: CameraState,
     galleryApps: () -> List<Pair<String, String>>,
     initialPage: Int = 0,
+    onSaveLocation: (Boolean) -> Unit = {},
     onClose: () -> Unit,
 ) {
     BackHandler(onBack = onClose)
@@ -105,7 +106,7 @@ fun SettingsScreen(
                     0 -> PhotoPage(controller, state)
                     1 -> VideoPage(controller, state)
                     2 -> ProcessingPage(controller, state)
-                    else -> GeneralPage(controller, state, galleryApps)
+                    else -> GeneralPage(controller, state, galleryApps, onSaveLocation)
                 }
             }
         }
@@ -147,6 +148,7 @@ private fun PhotoPage(controller: CameraController, state: CameraState) {
         selected = state.timerSeconds,
         onSelect = { controller.setTimer(it) },
     )
+    BasicText(stringResource(R.string.settings_rapid_desc), style = DescStyle)
     Toggle(stringResource(R.string.settings_grid), stringResource(R.string.settings_grid_desc), state.grid) { controller.setGrid(it) }
     Toggle(stringResource(R.string.settings_level), stringResource(R.string.settings_level_desc), state.level) { controller.setLevel(it) }
     Group(stringResource(R.string.group_viewfinder))
@@ -227,10 +229,21 @@ private fun ProcessingPage(controller: CameraController, state: CameraState) {
     Toggle(stringResource(R.string.settings_mf_sharpen), stringResource(R.string.settings_mf_sharpen_desc), o.sharpen, enabled = on) {
         controller.setMultiFrameOptions(o.copy(sharpen = it))
     }
+    Toggle(stringResource(R.string.settings_keep_std), stringResource(R.string.settings_keep_std_desc), state.keepStandard, enabled = on) {
+        controller.setKeepStandard(it)
+    }
 }
 
 @Composable
-private fun GeneralPage(controller: CameraController, state: CameraState, galleryApps: () -> List<Pair<String, String>>) {
+private fun GeneralPage(
+    controller: CameraController,
+    state: CameraState,
+    galleryApps: () -> List<Pair<String, String>>,
+    onSaveLocation: (Boolean) -> Unit,
+) {
+    Toggle(stringResource(R.string.settings_location), stringResource(R.string.settings_location_desc), state.saveLocation) {
+        onSaveLocation(it)
+    }
     Toggle(stringResource(R.string.settings_sound), stringResource(R.string.settings_sound_desc), state.shutterSound) {
         controller.setShutterSound(it)
     }
