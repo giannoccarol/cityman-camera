@@ -71,4 +71,15 @@
     <string name="settings_direct_video_desc">La fotocamera scrive direttamente nel codificatore video: più fluido e leggero. Se questa ROM non lo permette, torna da solo al metodo compatibile. Non si usa con time-lapse e stabilizzazione.</string>
     <string name="settings_direct_video_ok">Funziona su questa ROM: la fotocamera scrive direttamente nel codificatore video.</string>
     <string name="settings_direct_video_failed">Non ha funzionato su questa ROM, i video passano dalla GPU. Accendi per riprovare.</string>
+    <string name="a11y_settings">Impostazioni</string>
+    <string name="a11y_switch">Cambia fotocamera</string>
+    <string name="a11y_to_video">Passa al video</string>
+    <string name="a11y_to_photo">Passa alle foto</string>
+    <string name="a11y_shoot">Scatta</string>
+    <string name="a11y_record">Avvia registrazione</string>
+    <string name="a11y_stop">Ferma registrazione</string>
+    <string name="a11y_gallery">Apri galleria</string>
+    <string name="a11y_ae">Blocco esposizione</string>
+    <string name="shortcut_video">Video</string>
+    <string name="shortcut_selfie">Selfie</string>
 </resources>

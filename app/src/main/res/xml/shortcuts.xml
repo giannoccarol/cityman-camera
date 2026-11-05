@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shortcuts xmlns:android="http://schemas.android.com/apk/res/android">
+    <shortcut
+        android:shortcutId="video"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_video"
+        android:shortcutShortLabel="@string/shortcut_video">
+        <intent
+            android:action="android.media.action.VIDEO_CAMERA"
+            android:targetPackage="org.cityman.camera"
+            android:targetClass="org.cityman.camera.MainActivity" />
+    </shortcut>
+    <shortcut
+        android:shortcutId="selfie"
+        android:enabled="true"
+        android:icon="@drawable/ic_shortcut_selfie"
+        android:shortcutShortLabel="@string/shortcut_selfie">
+        <intent
+            android:action="org.cityman.camera.action.SELFIE"
+            android:targetPackage="org.cityman.camera"
+            android:targetClass="org.cityman.camera.MainActivity" />
+    </shortcut>
+</shortcuts>

@@ -310,6 +310,17 @@ class CameraController(private val context: Context) {
         if (started) openCamera()
     }
 
+    /** Switches to the front (or back) camera if it is not the current one. */
+    fun useFrontCamera(front: Boolean) = camHandler.post {
+        val current = caps?.front ?: run {
+            // Not opened yet: pick the index directly (back cameras are listed first).
+            val idx = if (front) cameraIds.indexOfFirst { manager.getCameraCharacteristics(it)[CameraCharacteristics.LENS_FACING] == CameraMetadata.LENS_FACING_FRONT } else 0
+            if (idx >= 0) _state.update { it.copy(cameraIndex = idx) }
+            return@post
+        }
+        if (current != front) switchCamera()
+    }
+
     fun setMode(mode: CaptureMode) = camHandler.post {
         if (_state.value.mode == mode) return@post
         if (recorder != null) stopRecording(restartPreview = false)

@@ -64,6 +64,10 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.semantics.Role
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.role
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.rotate
 import androidx.compose.ui.graphics.nativeCanvas
@@ -171,15 +175,18 @@ fun CameraScreen(
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(10.dp),
         ) {
-            RoundButton(onClick = { showSettings = !showSettings; openDial = null }) {
+            RoundButton(onClick = { showSettings = !showSettings; openDial = null }, description = stringResource(R.string.a11y_settings)) {
                 GlyphIcon(Glyph.SETTINGS, Modifier.rotate(rotation), size = 26.dp)
             }
+            val mfDesc = stringResource(R.string.settings_mf_title)
+            val aeDesc = stringResource(R.string.a11y_ae)
             if (st.mode == CaptureMode.PHOTO && st.caps?.rawSize != null) {
                 // Quick switch for multi-frame processing.
                 Badge(
                     "MF",
                     on = st.multiFrame,
-                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { controller.setMultiFrame(!st.multiFrame) },
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { controller.setMultiFrame(!st.multiFrame) }
+                        .semantics { contentDescription = mfDesc; role = Role.Switch },
                 )
             }
             if (st.saveDng && st.mode == CaptureMode.PHOTO && !st.multiFrame) Badge("RAW")
@@ -187,7 +194,8 @@ fun CameraScreen(
             Badge(
                 "AE",
                 on = st.aeLock,
-                modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { controller.setAeLock(!st.aeLock) },
+                modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { controller.setAeLock(!st.aeLock) }
+                    .semantics { contentDescription = aeDesc; role = Role.Switch },
             )
             if (st.mode == CaptureMode.VIDEO && st.timelapse > 1) Badge("${st.timelapse}×")
             if (st.multiFrame && st.still && st.mode == CaptureMode.PHOTO) Badge(stringResource(R.string.badge_still))
@@ -382,7 +390,8 @@ private fun ZoomButtons(
                     .clip(CircleShape)
                     .background(Color.Black.copy(alpha = 0.55f))
                     .border(if (active) 1.5.dp else 0.dp, if (active) Accent else Color.Transparent, CircleShape)
-                    .clickable { onZoom(p) },
+                    .clickable { onZoom(p) }
+                    .semantics { contentDescription = "zoom $label"; role = Role.Button },
                 contentAlignment = Alignment.Center,
             ) {
                 BasicText(
@@ -508,6 +517,7 @@ private fun ControlChips(
                         onClick = { onClick(kind) },
                         onLongClick = { onReset(kind) },
                     )
+                    .semantics { contentDescription = listOfNotNull(kind.title, value, live).joinToString(" "); role = Role.Button }
                     .padding(vertical = 5.dp)
                     .alpha(if (enabled) 1f else 0.4f),
                 horizontalAlignment = Alignment.CenterHorizontally,
@@ -549,11 +559,13 @@ private fun ShutterBar(
     onGallery: () -> Unit,
     modifier: Modifier,
 ) {
+    val galleryDesc = stringResource(R.string.a11y_gallery)
     Box(modifier.background(Color.Black.copy(alpha = 0.35f))) {
         val others = !dialOpen && !state.recording
         if (others && state.cameraCount > 1) {
             RoundButton(
                 onClick = onSwitch,
+                description = stringResource(R.string.a11y_switch),
                 modifier = if (portrait) Modifier.align(Alignment.CenterEnd).padding(end = 18.dp)
                 else Modifier.align(Alignment.TopCenter).padding(top = 18.dp),
             ) {
@@ -563,6 +575,7 @@ private fun ShutterBar(
         if (others) {
             RoundButton(
                 onClick = onMode,
+                description = stringResource(if (state.mode == CaptureMode.PHOTO) R.string.a11y_to_video else R.string.a11y_to_photo),
                 modifier = if (portrait) Modifier.align(Alignment.Center).offset(x = 92.dp)
                 else Modifier.align(Alignment.Center).offset(y = (-96).dp),
             ) {
@@ -590,7 +603,8 @@ private fun ShutterBar(
                     .clip(RoundedCornerShape(10.dp))
                     .border(1.5.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
                     .background(Color.White.copy(alpha = 0.08f))
-                    .clickable(enabled = state.lastUri != null, onClick = onGallery),
+                    .clickable(enabled = state.lastUri != null, onClick = onGallery)
+                    .semantics { contentDescription = galleryDesc; role = Role.Button },
             ) {
                 if (thumb != null) {
                     Image(thumb.asImageBitmap(), contentDescription = null, contentScale = ContentScale.Crop, modifier = Modifier.fillMaxSize())
@@ -607,12 +621,20 @@ private fun ShutterButton(mode: CaptureMode, recording: Boolean, busy: Boolean, 
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(if (pressed) 0.9f else 1f, tween(90), label = "shutterScale")
+    val desc = stringResource(
+        when {
+            recording -> R.string.a11y_stop
+            mode == CaptureMode.VIDEO -> R.string.a11y_record
+            else -> R.string.a11y_shoot
+        },
+    )
     Canvas(
         modifier
             .size(80.dp)
             .scale(scale)
             .clip(CircleShape)
-            .clickable(interactionSource = interaction, indication = null, enabled = !busy, onClick = onClick),
+            .clickable(interactionSource = interaction, indication = null, enabled = !busy, onClick = onClick)
+            .semantics { contentDescription = desc; role = Role.Button },
     ) {
         val r = size.minDimension / 2
         drawCircle(Color.White, radius = r - 2.dp.toPx(), style = Stroke(4.dp.toPx()))
@@ -640,13 +662,14 @@ private fun ShutterButton(mode: CaptureMode, recording: Boolean, busy: Boolean, 
 }
 
 @Composable
-private fun RoundButton(onClick: () -> Unit, modifier: Modifier = Modifier, content: @Composable () -> Unit) {
+private fun RoundButton(onClick: () -> Unit, modifier: Modifier = Modifier, description: String = "", content: @Composable () -> Unit) {
     Box(
         modifier
             .size(48.dp)
             .clip(CircleShape)
             .background(Color.Black.copy(alpha = 0.35f))
-            .clickable(onClick = onClick),
+            .clickable(onClick = onClick, onClickLabel = description.ifEmpty { null })
+            .semantics { if (description.isNotEmpty()) contentDescription = description; role = Role.Button },
         contentAlignment = Alignment.Center,
     ) { content() }
 }

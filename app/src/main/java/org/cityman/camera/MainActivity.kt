@@ -52,6 +52,11 @@ import org.cityman.camera.ui.CameraScreen
 import kotlin.math.abs
 
 class MainActivity : ComponentActivity() {
+    companion object {
+        /** Launcher shortcut: open on the front camera. */
+        const val ACTION_SELFIE = "org.cityman.camera.action.SELFIE"
+    }
+
     private lateinit var controller: CameraController
     private lateinit var orientationListener: OrientationEventListener
     private var hasCamera by mutableStateOf(false)
@@ -145,6 +150,10 @@ class MainActivity : ComponentActivity() {
         setTurnScreenOn(secure)
         controller.setSecure(secure)
         when (intent?.action) {
+            ACTION_SELFIE -> {
+                controller.setMode(org.cityman.camera.camera.CaptureMode.PHOTO)
+                controller.useFrontCamera(true)
+            }
             MediaStore.INTENT_ACTION_VIDEO_CAMERA -> controller.setMode(org.cityman.camera.camera.CaptureMode.VIDEO)
             MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA, MediaStore.INTENT_ACTION_STILL_IMAGE_CAMERA_SECURE ->
                 controller.setMode(org.cityman.camera.camera.CaptureMode.PHOTO)
