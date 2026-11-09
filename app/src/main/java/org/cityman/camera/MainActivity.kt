@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
@@ -185,7 +186,7 @@ class MainActivity : ComponentActivity() {
         getSystemService(DisplayManager::class.java).registerDisplayListener(displayListener, null)
         orientationListener.enable()
         if (BuildConfig.DEBUG) {
-            registerReceiver(debugReceiver, IntentFilter(DebugCommands.ACTION), RECEIVER_EXPORTED)
+            ContextCompat.registerReceiver(this, debugReceiver, IntentFilter(DebugCommands.ACTION), ContextCompat.RECEIVER_EXPORTED)
         }
         hasCamera = granted(Manifest.permission.CAMERA)
         if (hasCamera) controller.start() else if (!asked) requestPermissions()

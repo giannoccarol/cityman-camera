@@ -6,8 +6,9 @@ spirit of the old Windows Phone camera. The look is inspired by it, not copied: 
 the launcher icon and the layout are original, and the app uses no Microsoft or Nokia names,
 fonts or assets.
 
-Package `org.cityman.camera`, minSdk 33, targetSdk 36 (compileSdk 37.2, which the AndroidX
-libraries in use require).
+Package `org.cityman.camera`, minSdk 30 (Android 11), targetSdk 36 (compileSdk 37.2, which the
+AndroidX libraries in use require). It also runs on older phones and ROMs: see
+[Android versions and older phones](#android-versions-and-older-phones).
 
 ![Arco: arc dial, quick panel and settings](docs/screenshots/overview.png)
 
@@ -77,6 +78,42 @@ libraries in use require).
 - F-Droid / IzzyOnDroid metadata in `fastlane/metadata/android` (English, Italian).
 
 Not in scope: Living Images and Movie Moments (dropped on request).
+
+## Android versions and older phones
+
+Arco runs on Android 11 and later. It is written and tuned on Android 16 (950 XL, Adreno 430);
+on other phones each feature checks what the camera HAL and the GPU offer, and turns off by
+itself instead of closing the app. Settings → general → about shows what Arco found: the camera's
+hardware level (LEGACY, LIMITED, FULL, LEVEL_3), RAW, manual exposure, the OpenGL ES version and
+Android. The log line `camera N: …` (tag `ArcoCamera`) says the same, and why multi-frame is off.
+
+| Feature | Needs | Without it |
+|---|---|---|
+| Multi-frame RAW | RAW capability, `MANUAL_SENSOR` (the burst sets ISO and shutter), OpenGL ES 3.1 (compute shaders) | MF badge and quick toggle hidden; the settings say which one is missing; photos are the HAL's JPEG |
+| Multi-frame, GPU refuses at run time | the ES 3.1 context and shaders build | multi-frame turns off for that launch with a message; the shot keeps its safety JPEG |
+| DNG | RAW capability | option hidden |
+| WB dial | `MANUAL_POST_PROCESSING` and the sensor's colour matrices | chip greyed out |
+| ISO and SHUTTER dials | `MANUAL_SENSOR` | chips greyed out |
+| FOCUS dial | movable lens, `AF_MODE_OFF`, `LENS_FOCUS_DISTANCE` in the request keys | chip shows FIXED |
+| Tap to focus / meter | AF / AE regions | that half of the tap is skipped |
+| Histogram, zebra, peaking | one more small YUV stream | session retried without it |
+| Video, time-lapse, stabilisation | OpenGL ES 3.0 for the YUV → GL path | — |
+| Video recorder | `MediaRecorder(Context)` (Android 12) | the old constructor on Android 11, same result |
+| System accent colour | Android 12 (Material You) | amber, option hidden |
+| Debug commands over adb | `RECEIVER_EXPORTED` (Android 13) | `ContextCompat` registers the receiver on 11 and 12 |
+
+Reference phones for Android 11 (not tried yet):
+
+- **Lumia 950 XL with LineageOS 18.1** (Snapdragon 808, Adreno 418, OpenGL ES 3.1): everything can
+  work if the 18.1 camera HAL reports RAW and manual sensor; otherwise the table above applies.
+- **Lumia 1520 / 930** (Snapdragon 800, Adreno 330, OpenGL ES 3.0): no camera HAL yet. Once there
+  is one, multi-frame stays off (no compute shaders); DNG and the dials depend on the HAL.
+
+Tried on the Android 11 emulator (API 30, emulated LEVEL_3 camera with RAW, the image reports
+OpenGL ES 3.0, 9/11/2026): permission request, viewfinder, JPEG, DNG, front camera, direct video
+recording, settings; multi-frame hidden with the ES 3.0 reason, also with it forced on through the
+debug command. The YUV → GL video path (time-lapse, stabilisation) records no frames on the
+emulator, on API 33 as well: the emulator's GL → encoder path, not the Android version.
 
 ## Phone notes
 
@@ -151,7 +188,9 @@ Unit tests (dial labels, Planckian locus, noise model fit) run on the host:
 - `camera/FrameAnalyzer.kt` — viewfinder analysis: histogram, clipping, zebra/peaking overlay.
 - `processing/` — the multi-frame pipeline (`MultiFrameProcessor`, `Shaders`, `Gl`) and the
   parallel JPEG encoder (`ParallelJpeg`).
-- `camera/CameraCaps.kt` — what each camera supports, stream sizes, frame-rate ranges.
+- `camera/CameraCaps.kt` — what each camera supports (hardware level, RAW, manual controls,
+  whether multi-frame can run), stream sizes, frame-rate ranges.
+- `camera/DeviceSupport.kt` — what the phone offers: OpenGL ES version, Android 12 dynamic colour.
 - `camera/ColorCalibration.kt` — Kelvin → white balance gains and colour transform.
 - `camera/MediaStoreWriter.kt` — saving to `DCIM/Camera` through MediaStore.
 - `ui/Dials.kt` — dial stops, labels and how they map to the controls.

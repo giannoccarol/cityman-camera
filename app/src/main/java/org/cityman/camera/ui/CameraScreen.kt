@@ -89,6 +89,7 @@ import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import kotlinx.coroutines.delay
 import org.cityman.camera.R
 import org.cityman.camera.camera.CameraController
+import org.cityman.camera.camera.DeviceSupport
 import org.cityman.camera.camera.CameraState
 import org.cityman.camera.camera.CaptureMode
 import org.cityman.camera.camera.PhotoFormat
@@ -113,7 +114,8 @@ fun CameraScreen(
     val rotation by animateFloatAsState(iconRotation, tween(250), label = "iconRotation")
 
     // Accent colour: Android's dynamic accent (light tone, for the black UI) or amber.
-    val dynamicAccent = colorResource(android.R.color.system_accent1_300)
+    // Android 11 has no dynamic colours: stay amber there.
+    val dynamicAccent = if (DeviceSupport.dynamicColor) colorResource(android.R.color.system_accent1_300) else Amber
     LaunchedEffect(st.systemAccent, dynamicAccent) {
         Accent = if (st.systemAccent) dynamicAccent else Amber
         controller.peakingColor = Accent.toArgb()
@@ -183,7 +185,8 @@ fun CameraScreen(
             }
             val mfDesc = stringResource(R.string.settings_mf_title)
             val aeDesc = stringResource(R.string.a11y_ae)
-            if (st.mode == CaptureMode.PHOTO && st.caps?.rawSize != null) {
+            val mfReady = st.caps?.multiFrameReady == true
+            if (st.mode == CaptureMode.PHOTO && mfReady) {
                 // Quick switch for multi-frame processing.
                 Badge(
                     "MF",
@@ -192,7 +195,7 @@ fun CameraScreen(
                         .semantics { contentDescription = mfDesc; role = Role.Switch },
                 )
             }
-            if (st.saveDng && st.mode == CaptureMode.PHOTO && !st.multiFrame) Badge("RAW")
+            if (st.saveDng && st.mode == CaptureMode.PHOTO && !(st.multiFrame && mfReady)) Badge("RAW")
             // Exposure / white balance lock, both modes.
             Badge(
                 "AE",
@@ -201,7 +204,7 @@ fun CameraScreen(
                     .semantics { contentDescription = aeDesc; role = Role.Switch },
             )
             if (st.mode == CaptureMode.VIDEO && st.timelapse > 1) Badge("${st.timelapse}×")
-            if (st.multiFrame && st.still && st.mode == CaptureMode.PHOTO) Badge(stringResource(R.string.badge_still))
+            if (st.multiFrame && mfReady && st.still && st.mode == CaptureMode.PHOTO) Badge(stringResource(R.string.badge_still))
             if (st.focusPoint != null) Badge(stringResource(R.string.badge_locked))
             if (st.rapidCount > 0) Badge("×${st.rapidCount}")
         }
@@ -780,6 +783,7 @@ private fun QuickPanel(
 ) {
     val photo = state.mode == CaptureMode.PHOTO
     val raw = state.caps?.rawSize != null
+    val mfReady = state.caps?.multiFrameReady == true
     val title = TextStyle(color = Color.White, fontSize = 18.sp)
     Column(
         Modifier
@@ -789,7 +793,7 @@ private fun QuickPanel(
             .padding(horizontal = 18.dp, vertical = 16.dp),
         verticalArrangement = Arrangement.spacedBy(16.dp),
     ) {
-        if (photo && raw) Toggle(stringResource(R.string.settings_mf_title), null, state.multiFrame, titleStyle = title) { onMultiFrame(it) }
+        if (photo && mfReady) Toggle(stringResource(R.string.settings_mf_title), null, state.multiFrame, titleStyle = title) { onMultiFrame(it) }
         if (photo) {
             Choice(
                 title = stringResource(R.string.settings_timer_title),

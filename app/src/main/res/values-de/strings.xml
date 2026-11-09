@@ -41,6 +41,11 @@
     <string name="settings_tools_desc">Sie zeigen oder verbergen nur, was die Kamera misst; die Messung für die Multi-Frame-Belichtung läuft immer.</string>
     <string name="settings_mf_title">Multi-Frame-Verarbeitung</string>
     <string name="settings_mf_desc">Mehrere RAW-Bilder werden auf der GPU zusammengeführt: weniger Rauschen, mehr Dynamikumfang, 20 MP vom ganzen Sensor. Einige Sekunden pro Foto.</string>
+    <string name="settings_mf_off_raw">Nicht verfügbar: Diese Kamera liefert keine RAW-Bilder.</string>
+    <string name="settings_mf_off_manual">Nicht verfügbar: Diese Kamera hat keine manuelle Belichtung, die die Serie braucht.</string>
+    <string name="settings_mf_off_gpu">Nicht verfügbar: Die GPU hat OpenGL ES %1$s, Multi-Frame braucht 3.1 (Compute-Shader).</string>
+    <string name="settings_mf_off_gpu_failed">Ausgeschaltet: Die GPU konnte die Multi-Frame-Shader nicht ausführen.</string>
+    <string name="about_device">Diese Kamera: %1$s · OpenGL ES %2$s · Android %3$s</string>
     <string name="settings_mf_frames_title">Bilder pro Foto</string>
     <string name="settings_mf_frames_desc">Auto wählt nach Licht und danach, wie ruhig das Telefon ist (bis zu 12, wenn es aufliegt).</string>
     <string name="group_look">Look</string>

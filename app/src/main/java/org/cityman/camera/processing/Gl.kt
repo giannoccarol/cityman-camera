@@ -33,6 +33,14 @@ class GlContext {
         check(context != EGL14.EGL_NO_CONTEXT) { "eglCreateContext failed" }
         surface = EGL14.eglCreatePbufferSurface(display, configs[0], intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE), 0)
         check(EGL14.eglMakeCurrent(display, surface, surface, context)) { "eglMakeCurrent failed" }
+        // An ES 3.0 driver hands out a "version 3" context too, without compute shaders.
+        val v = IntArray(2)
+        GLES31.glGetIntegerv(GLES31.GL_MAJOR_VERSION, v, 0)
+        GLES31.glGetIntegerv(GLES31.GL_MINOR_VERSION, v, 1)
+        if (v[0] < 3 || (v[0] == 3 && v[1] < 1)) {
+            release()
+            error("eglCreateContext: OpenGL ES ${v[0]}.${v[1]}, compute shaders need 3.1")
+        }
     }
 
     fun release() {

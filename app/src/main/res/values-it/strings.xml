@@ -41,6 +41,11 @@
     <string name="settings_tools_desc">Mostrano o nascondono soltanto ciò che la fotocamera misura; la misura che regola l\'esposizione del multi-frame resta sempre attiva.</string>
     <string name="settings_mf_title">Elaborazione multi-frame</string>
     <string name="settings_mf_desc">Più fotogrammi RAW fusi sulla GPU: meno rumore, più gamma dinamica, 20 MP da tutto il sensore. Qualche secondo per foto.</string>
+    <string name="settings_mf_off_raw">Non disponibile: questa fotocamera non fornisce fotogrammi RAW.</string>
+    <string name="settings_mf_off_manual">Non disponibile: questa fotocamera non ha l\'esposizione manuale, che serve alla raffica.</string>
+    <string name="settings_mf_off_gpu">Non disponibile: la GPU ha OpenGL ES %1$s, il multi-frame richiede la 3.1 (compute shader).</string>
+    <string name="settings_mf_off_gpu_failed">Spento: la GPU non è riuscita a eseguire gli shader del multi-frame.</string>
+    <string name="about_device">Questa fotocamera: %1$s · OpenGL ES %2$s · Android %3$s</string>
     <string name="settings_mf_frames_title">Fotogrammi per foto</string>
     <string name="settings_mf_frames_desc">Auto sceglie in base alla luce e a quanto è fermo il telefono (fino a 12 quando è appoggiato).</string>
     <string name="group_look">aspetto</string>

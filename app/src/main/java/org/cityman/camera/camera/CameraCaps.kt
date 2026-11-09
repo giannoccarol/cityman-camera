@@ -4,6 +4,7 @@ import android.graphics.ImageFormat
 import android.graphics.Rect
 import android.hardware.camera2.CameraCharacteristics
 import android.hardware.camera2.CameraMetadata
+import android.hardware.camera2.CaptureRequest
 import android.media.MediaRecorder
 import android.util.Range
 import android.util.Size
@@ -11,6 +12,8 @@ import android.view.SurfaceHolder
 import kotlin.math.abs
 
 enum class PhotoFormat { FULL, RATIO_4_3, RATIO_16_9 }
+
+enum class MultiFrameBlocker { NO_RAW, NO_MANUAL, NO_GPU }
 
 /** What one camera can do, read once from its characteristics. */
 class CameraCaps(val id: String, val chars: CameraCharacteristics) {
@@ -49,7 +52,43 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
         map.getOutputSizes(ImageFormat.RAW_SENSOR)?.maxByOrNull { it.area() }
     } else null
 
-    val hasFocus: Boolean get() = minFocusDiopters > 0f && CameraMetadata.CONTROL_AF_MODE_OFF in afModes
+    /** LEGACY, LIMITED, FULL, LEVEL_3 or EXTERNAL, as the HAL reports it. */
+    val hardwareLevel: Int = chars[CameraCharacteristics.INFO_SUPPORTED_HARDWARE_LEVEL]
+        ?: CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY
+    val hardwareLevelName: String = when (hardwareLevel) {
+        CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY -> "LEGACY"
+        CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LIMITED -> "LIMITED"
+        CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_FULL -> "FULL"
+        CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_3 -> "LEVEL_3"
+        CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_EXTERNAL -> "EXTERNAL"
+        else -> "level $hardwareLevel"
+    }
+    private val requestKeys = chars.availableCaptureRequestKeys.toSet()
+
+    /** Manual focus needs a movable lens and a HAL that honours the focus distance. */
+    val hasFocus: Boolean
+        get() = minFocusDiopters > 0f && CameraMetadata.CONTROL_AF_MODE_OFF in afModes &&
+            CaptureRequest.LENS_FOCUS_DISTANCE in requestKeys
+
+    /**
+     * Why multi-frame RAW is off on this camera, or null when it can run: it needs RAW frames,
+     * manual exposure for the burst and compute shaders on the GPU.
+     */
+    val multiFrameBlocker: MultiFrameBlocker?
+        get() = when {
+            rawSize == null -> MultiFrameBlocker.NO_RAW
+            !manualSensor -> MultiFrameBlocker.NO_MANUAL
+            !DeviceSupport.computeShaders -> MultiFrameBlocker.NO_GPU
+            else -> null
+        }
+    val multiFrameReady: Boolean get() = multiFrameBlocker == null
+
+    /** One line for the log and the settings page. */
+    fun summary(): String = buildString {
+        append(hardwareLevelName)
+        if (rawSize != null) append(" · RAW")
+        if (manualSensor) append(" · manual")
+    }
     val hasAutoFocus: Boolean get() = CameraMetadata.CONTROL_AF_MODE_AUTO in afModes
 
     fun jpegSize(format: PhotoFormat): Size {

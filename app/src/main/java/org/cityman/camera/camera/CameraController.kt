@@ -28,6 +28,7 @@ import android.media.ImageReader
 import android.media.MediaActionSound
 import android.media.MediaRecorder
 import android.net.Uri
+import android.os.Build
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -126,6 +127,10 @@ data class CameraState(
  * second one. The UI talks to it through the public methods (any thread) and reads [state].
  */
 class CameraController(private val context: Context) {
+    init {
+        DeviceSupport.init(context)
+    }
+
     private val manager = context.getSystemService(CameraManager::class.java)
     private val camThread = HandlerThread("arco-camera").apply { start() }
     private val camHandler = Handler(camThread.looper)
@@ -365,7 +370,8 @@ class CameraController(private val context: Context) {
      * The viewfinder analysis stream costs power: it runs only for the multi-frame exposure plan
      * or when histogram, zebra or peaking are shown.
      */
-    private fun analysisNeeded(st: CameraState) = st.multiFrame || st.showHistogram || st.zebra || st.peaking
+    private fun analysisNeeded(st: CameraState) =
+        (st.multiFrame && caps?.multiFrameReady != false) || st.showHistogram || st.zebra || st.peaking
 
     fun setGrid(enabled: Boolean) {
         prefs.edit().putBoolean("grid", enabled).apply()
@@ -580,7 +586,7 @@ class CameraController(private val context: Context) {
         return try {
             val surface = android.media.MediaCodec.createPersistentInputSurface()
             val dummy = java.io.File(context.cacheDir, "sizing.mp4")
-            MediaRecorder(context).apply {
+            newMediaRecorder().apply {
                 setVideoSource(MediaRecorder.VideoSource.SURFACE)
                 setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
                 setOutputFile(dummy.absolutePath)
@@ -743,6 +749,8 @@ class CameraController(private val context: Context) {
             return
         }
         caps = c
+        Log.i(TAG, "camera $id: ${c.summary()}, GLES ${DeviceSupport.glesLabel}, Android ${Build.VERSION.SDK_INT}" +
+            (c.multiFrameBlocker?.let { ", multi-frame off ($it)" } ?: ""))
         _state.update { it.copy(caps = c) }
         try {
             opening = true
@@ -910,9 +918,10 @@ class CameraController(private val context: Context) {
                 outputs += OutputConfiguration(it.surface)
             }
             val rs = c.rawSize
-            if ((st.saveDng || st.multiFrame) && rs != null) {
+            val mf = st.multiFrame && c.multiFrameReady
+            if ((st.saveDng || mf) && rs != null) {
                 // A burst can queue its frames here while the GPU merges them one by one.
-                val images = if (st.multiFrame) MAX_BURST + 1 else 2
+                val images = if (mf) MAX_BURST + 1 else 2
                 rawReader = ImageReader.newInstance(rs.width, rs.height, ImageFormat.RAW_SENSOR, images).also {
                     it.setOnImageAvailableListener(::onRaw, ioHandler)
                     outputs += OutputConfiguration(it.surface)
@@ -1266,7 +1275,7 @@ class CameraController(private val context: Context) {
             finishShot(force = true)
         }
         // Rapid fire takes standard photos (no multi-frame, no DNG), focusing only before the first.
-        val mf = _state.value.multiFrame && rawReader != null && !rapid
+        val mf = _state.value.multiFrame && c.multiFrameReady && rawReader != null && !rapid
         shot = Shot(jpegOrientation(c), rawReader != null && !mf && !rapid, SystemClock.elapsedRealtime(), mf)
         _state.update { it.copy(capturing = true) }
         analyzer?.paused = true
@@ -1672,6 +1681,7 @@ class CameraController(private val context: Context) {
             } catch (e: Throwable) {
                 Log.e(TAG, "GPU setup", e)
                 job.failed = true
+                gpuRefused(e)
             }
         }
         burst = job
@@ -1810,6 +1820,7 @@ class CameraController(private val context: Context) {
         } catch (e: Throwable) {
             Log.e(TAG, "finish burst", e)
             processor.abort()
+            gpuRefused(e)
             null
         }
         // The GPU is free again: allow the next photo while this one is encoded and saved.
@@ -1923,7 +1934,7 @@ class CameraController(private val context: Context) {
         }
         val fd = store.openFd(uri)
         val fps = c.fpsRange(video = true)?.upper ?: 30
-        val r = MediaRecorder(context)
+        val r = newMediaRecorder()
         try {
             val lapse = _state.value.timelapse
             val withAudio = audio && lapse <= 1
@@ -2046,6 +2057,26 @@ class CameraController(private val context: Context) {
         val thumb = store.thumbnail(uri, video) ?: return
         _state.update { if (it.lastUri == null) it.copy(thumbnail = thumb, lastUri = uri, lastIsVideo = video) else it }
     }
+
+    /**
+     * A GPU that cannot create the ES 3.1 context or compile the compute shaders will never
+     * merge a burst: turn multi-frame off for this launch (the photo falls back to the standard
+     * JPEG) instead of failing every shot.
+     */
+    private fun gpuRefused(e: Throwable) {
+        val m = e.message ?: return
+        val gl = listOf("shader ", "program ", "eglCreateContext", "eglInitialize", "eglMakeCurrent", "no EGL config")
+        if (gl.none { m.startsWith(it) }) return
+        DeviceSupport.computeFailed = true
+        _state.update { it.copy(multiFrame = false) }
+        report("Multi-frame turned off: this GPU cannot run its OpenGL ES 3.1 shaders")
+        camHandler.post { if (_state.value.mode == CaptureMode.PHOTO) reconfigure() }
+    }
+
+    /** MediaRecorder(Context) is Android 12+; the old constructor works the same on 11. */
+    @Suppress("DEPRECATION")
+    private fun newMediaRecorder(): MediaRecorder =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) MediaRecorder(context) else MediaRecorder()
 
     private fun report(msg: String) {
         Log.w(TAG, msg)

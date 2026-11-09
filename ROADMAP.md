@@ -24,6 +24,19 @@ Ultima release provata: **v0.1.1** (GitHub, 31/10). Dopo: 0.2.0 e 0.3.0 compilat
 | Test e CI | 16 test JVM, GitHub Actions | build + test a ogni push; piano del burst estratto e testato |
 | Taratura | laboratorio Python (`tools/burst-lab`) | burst RAW salvati dall'app (opzione sviluppatore), prototipi misurati su dati sintetici |
 
+### Android 11 e 12 (9/11, non ancora in una release)
+
+`minSdk` da 33 a 30: Arco si installa su Android 11 (950 XL con LineageOS 18.1, Lumia 1520 e 930).
+Lint senza errori `NewApi`. Le funzioni che il telefono non regge si spengono da sole (tabella nel
+README, sezione "Android versions and older phones"): multi-frame solo con RAW, `MANUAL_SENSOR` e
+OpenGL ES 3.1 (l'Adreno 330 ha la 3.0), fuoco manuale solo se l'HAL accetta `LENS_FOCUS_DISTANCE`,
+accento di sistema solo da Android 12, `MediaRecorder()` vecchio su Android 11. Se la GPU rifiuta
+gli shader a runtime il multi-frame si spegne per quell'avvio con un messaggio. Provato
+sull'emulatore API 30 (GLES 3.0); il video YUV → GL non registra sull'emulatore (anche API 33).
+
+Da provare: 950 XL con 18.1 (livello HAL, RAW, multi-frame sull'Adreno 418, video diretto),
+Lumia 1520/930 quando ci sarà un HAL camera.
+
 ### Da provare sul telefono (prossima occasione)
 
 1. **Video diretto**: registrare 10 s con la posteriore; nel log `direct video path works` o il

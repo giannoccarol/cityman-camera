@@ -30,6 +30,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalUriHandler
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.TextStyle
@@ -40,6 +41,8 @@ import kotlinx.coroutines.launch
 import org.cityman.camera.BuildConfig
 import org.cityman.camera.R
 import org.cityman.camera.camera.CameraController
+import org.cityman.camera.camera.DeviceSupport
+import org.cityman.camera.camera.MultiFrameBlocker
 import org.cityman.camera.camera.CameraState
 import org.cityman.camera.camera.PhotoFormat
 import java.util.Locale
@@ -79,7 +82,7 @@ fun SettingsScreen(
 
     Column(Modifier.fillMaxSize().background(Color.Black).padding(start = 20.dp, top = 18.dp)) {
         BasicText(
-            stringResource(R.string.app_name).uppercase(Locale.getDefault()) + " · " + stringResource(R.string.settings_title),
+            stringResource(R.string.app_name).uppercase(LocalConfiguration.current.locales[0]) + " · " + stringResource(R.string.settings_title),
             style = TextStyle(color = Color.White, fontSize = 14.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 1.sp),
             modifier = Modifier.clickable(onClick = onClose).padding(vertical = 4.dp),
         )
@@ -196,10 +199,19 @@ private fun VideoPage(controller: CameraController, state: CameraState) {
 
 @Composable
 private fun ProcessingPage(controller: CameraController, state: CameraState) {
-    val available = state.caps?.rawSize != null
+    val blocker = state.caps?.multiFrameBlocker
+    val available = state.caps != null && blocker == null
+    val mfDesc = when (blocker) {
+        null -> stringResource(R.string.settings_mf_desc)
+        MultiFrameBlocker.NO_RAW -> stringResource(R.string.settings_mf_off_raw)
+        MultiFrameBlocker.NO_MANUAL -> stringResource(R.string.settings_mf_off_manual)
+        MultiFrameBlocker.NO_GPU ->
+            if (DeviceSupport.computeFailed) stringResource(R.string.settings_mf_off_gpu_failed)
+            else stringResource(R.string.settings_mf_off_gpu, DeviceSupport.glesLabel)
+    }
     Toggle(
-        stringResource(R.string.settings_mf_title), stringResource(R.string.settings_mf_desc),
-        state.multiFrame, enabled = available,
+        stringResource(R.string.settings_mf_title), mfDesc,
+        state.multiFrame && available, enabled = available,
     ) { controller.setMultiFrame(it) }
     val on = state.multiFrame && available
     Choice(
@@ -247,8 +259,10 @@ private fun GeneralPage(
     Toggle(stringResource(R.string.settings_sound), stringResource(R.string.settings_sound_desc), state.shutterSound) {
         controller.setShutterSound(it)
     }
-    Toggle(stringResource(R.string.settings_accent), stringResource(R.string.settings_accent_desc), state.systemAccent) {
-        controller.setSystemAccent(it)
+    if (DeviceSupport.dynamicColor) {
+        Toggle(stringResource(R.string.settings_accent), stringResource(R.string.settings_accent_desc), state.systemAccent) {
+            controller.setSystemAccent(it)
+        }
     }
     val apps = remember { galleryApps() }
     val options = listOf<Pair<String?, String>>(null to stringResource(R.string.settings_gallery_default)) + apps
@@ -269,6 +283,13 @@ private fun GeneralPage(
         BasicText("${stringResource(R.string.app_name)} ${BuildConfig.VERSION_NAME}", style = TitleStyle)
         BasicText(stringResource(R.string.about_desc), style = DescStyle)
         BasicText(
+            stringResource(
+                R.string.about_device,
+                state.caps?.summary() ?: "—", DeviceSupport.glesLabel, android.os.Build.VERSION.RELEASE,
+            ),
+            style = DescStyle,
+        )
+        BasicText(
             "github.com/giannoccarol/cityman-camera",
             style = TextStyle(color = Accent, fontSize = 15.sp),
             modifier = Modifier.clickable { uri.openUri("https://github.com/giannoccarol/cityman-camera") }.padding(vertical = 4.dp),
@@ -278,7 +299,7 @@ private fun GeneralPage(
 
 @Composable
 private fun Group(text: String) {
-    BasicText(text.lowercase(Locale.getDefault()), style = GroupStyle, modifier = Modifier.padding(top = 6.dp))
+    BasicText(text.lowercase(LocalConfiguration.current.locales[0]), style = GroupStyle, modifier = Modifier.padding(top = 6.dp))
 }
 
 /** A setting with an on/off switch; the switch shows its state in words, as on a phone of the time. */

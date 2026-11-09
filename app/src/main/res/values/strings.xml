@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
-    <string name="app_name">Arco</string>
+    <string name="app_name" translatable="false">Arco</string>
     <string name="badge_locked">AF·AE LOCK</string>
     <string name="settings_grid">Grid</string>
     <string name="settings_dng">Also save RAW (DNG)</string>
@@ -42,6 +42,11 @@
     <string name="settings_tools_desc">These only show or hide what the camera measures; the measurement that sets the multi-frame exposure always runs.</string>
     <string name="settings_mf_title">Multi-frame processing</string>
     <string name="settings_mf_desc">Several RAW frames merged on the GPU: less noise, more dynamic range, 20 MP from the whole sensor. A few seconds per photo.</string>
+    <string name="settings_mf_off_raw">Not available: this camera does not deliver RAW frames.</string>
+    <string name="settings_mf_off_manual">Not available: this camera has no manual exposure, which the burst needs.</string>
+    <string name="settings_mf_off_gpu">Not available: the GPU has OpenGL ES %1$s, multi-frame needs 3.1 (compute shaders).</string>
+    <string name="settings_mf_off_gpu_failed">Turned off: the GPU could not run the multi-frame shaders.</string>
+    <string name="about_device">This camera: %1$s · OpenGL ES %2$s · Android %3$s</string>
     <string name="settings_mf_frames_title">Frames per photo</string>
     <string name="settings_mf_frames_desc">Auto picks from the light and from how still the phone is (up to 12 when it rests).</string>
     <string name="group_look">look</string>

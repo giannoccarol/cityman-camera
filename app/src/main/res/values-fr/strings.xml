@@ -41,6 +41,11 @@
     <string name="settings_tools_desc">Ils affichent ou masquent seulement ce que l\'appareil mesure ; la mesure qui règle l\'exposition du multi-image reste toujours active.</string>
     <string name="settings_mf_title">Traitement multi-image</string>
     <string name="settings_mf_desc">Plusieurs images RAW fusionnées sur le GPU : moins de bruit, plus de dynamique, 20 MP de tout le capteur. Quelques secondes par photo.</string>
+    <string name="settings_mf_off_raw">Indisponible : cette caméra ne fournit pas d\'images RAW.</string>
+    <string name="settings_mf_off_manual">Indisponible : cette caméra n\'a pas d\'exposition manuelle, nécessaire à la rafale.</string>
+    <string name="settings_mf_off_gpu">Indisponible : le GPU a OpenGL ES %1$s, le multi-image demande la 3.1 (compute shaders).</string>
+    <string name="settings_mf_off_gpu_failed">Désactivé : le GPU n\'a pas pu exécuter les shaders multi-image.</string>
+    <string name="about_device">Cette caméra : %1$s · OpenGL ES %2$s · Android %3$s</string>
     <string name="settings_mf_frames_title">Images par photo</string>
     <string name="settings_mf_frames_desc">Auto choisit selon la lumière et l\'immobilité du téléphone (jusqu\'à 12 quand il est posé).</string>
     <string name="group_look">rendu</string>

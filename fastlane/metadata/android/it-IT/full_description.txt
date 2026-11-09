@@ -1,5 +1,7 @@
 <p>Arco è un'app fotocamera Camera2 scritta per il Microsoft Lumia 950 XL (cityman) con il port della community di LineageOS 23.2 (Android 16). Funziona anche su altri telefoni con Camera2 completa, ma è tarata per questo: limiti del suo HAL, sensori e GPU.</p>
 
+<p>Funziona da Android 11 in poi. Quello che il telefono non sa fare si spegne da solo: il multi-frame richiede RAW, esposizione manuale e OpenGL ES 3.1; i quadranti i controlli Camera2 corrispondenti.</p>
+
 <p><b>Controlli manuali su quadranti ad arco</b>, nello spirito della vecchia fotocamera di Windows Phone (grafica originale, nessun materiale Microsoft o Nokia): bilanciamento del bianco in Kelvin, fuoco, ISO, tempo e compensazione dell'esposizione. Si tocca un'etichetta per aprire il quadrante, si trascina lungo l'arco, una pressione lunga torna all'automatico.</p>
 
 <p><b>Elaborazione RAW multi-frame sulla GPU</b> (facoltativa): una raffica di fotogrammi RAW viene allineata e fusa con compute shader OpenGL ES, poi sviluppata con correzione della vignettatura, demosaicizzazione, colore dalle matrici di calibrazione del sensore, tone mapping locale e nitidezza. Meno rumore, più gamma dinamica, modalità notte su cavalletto, controluce con fotogrammi corti in più, zoom 2× dalla raffica fusa. Il JPEG della fotocamera resta come copia di sicurezza finché la foto elaborata non è salvata.</p>

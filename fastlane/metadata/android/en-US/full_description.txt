@@ -1,5 +1,7 @@
 <p>Arco is a Camera2 camera app written for the Microsoft Lumia 950 XL (cityman) running the community LineageOS 23.2 (Android 16) port. It works on other phones with a full Camera2 implementation, but it is tuned for that one: its HAL limits, its sensors and its GPU.</p>
 
+<p>Runs on Android 11 and later. What a phone cannot do turns off by itself: multi-frame needs RAW, manual exposure and OpenGL ES 3.1; the dials need the matching Camera2 controls.</p>
+
 <p><b>Manual controls on arc dials</b>, in the spirit of the old Windows Phone camera (original artwork, no Microsoft or Nokia assets): white balance in Kelvin, focus, ISO, shutter and exposure compensation. Tap a chip to open its dial, drag along the ring, long-press to go back to auto.</p>
 
 <p><b>Multi-frame RAW processing on the GPU</b> (optional): a burst of RAW frames is aligned and merged with OpenGL ES compute shaders, then developed with lens shading correction, demosaicing, colour calibration from the sensor's own matrices, local tone mapping and sharpening. Lower noise, more dynamic range, a night mode on a tripod, backlit scenes with extra short frames, a 2× zoom from the merged burst. The camera's own JPEG is kept as a safety copy until the processed photo is saved.</p>

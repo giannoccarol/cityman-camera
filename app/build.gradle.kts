@@ -22,7 +22,7 @@ android {
 
     defaultConfig {
         applicationId = "org.cityman.camera"
-        minSdk = 33
+        minSdk = 30
         targetSdk = 36
         versionCode = 4
         versionName = "0.3.0"
