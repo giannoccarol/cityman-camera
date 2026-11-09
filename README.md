@@ -102,10 +102,13 @@ Android. The log line `camera N: …` (tag `ArcoCamera`) says the same, and why 
 | System accent colour | Android 12 (Material You) | amber, option hidden |
 | Debug commands over adb | `RECEIVER_EXPORTED` (Android 13) | `ContextCompat` registers the receiver on 11 and 12 |
 
-Reference phones for Android 11 (not tried yet):
+Reference phones for Android 11 (not tried yet; with no camera at all Arco says so on screen):
 
-- **Lumia 950 XL with LineageOS 18.1** (Snapdragon 808, Adreno 418, OpenGL ES 3.1): everything can
-  work if the 18.1 camera HAL reports RAW and manual sensor; otherwise the table above applies.
+- **Lumia 950 XL with LineageOS 18.1** (Snapdragon 810, Adreno 430, OpenGL ES 3.2, the same GPU as
+  on Android 16): everything works as on Android 16 except the system accent colour, given a camera
+  HAL that reports RAW and manual sensor.
+- **Lumia 950 (talkman)** (Snapdragon 808, Adreno 418, OpenGL ES 3.1): everything can work;
+  multi-frame merging is slower than on the Adreno 430 (not measured).
 - **Lumia 1520 / 930** (Snapdragon 800, Adreno 330, OpenGL ES 3.0): no camera HAL yet. Once there
   is one, multi-frame stays off (no compute shaders); DNG and the dials depend on the HAL.
 

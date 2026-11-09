@@ -7,6 +7,7 @@
     <string name="format_full">Intero</string>
     <string name="permission_needed">Arco ha bisogno della fotocamera per scattare. Il microfono serve per l\'audio dei video.</string>
     <string name="permission_grant">Consenti</string>
+    <string name="no_camera">Nessuna fotocamera trovata. Questo telefono o questa ROM non ha un driver della fotocamera (HAL) utilizzabile da Android.</string>
     <string name="no_viewer">Nessuna app può aprire questo file</string>
     <string name="settings_mf">Elaborazione multi-frame (burst RAW)</string>
     <string name="settings_mf_frames">FOTOGRAMMI PER FOTO</string>

@@ -7,6 +7,7 @@
     <string name="format_full">Voll</string>
     <string name="permission_needed">Arco braucht die Kamera, um Fotos aufzunehmen. Das Mikrofon wird für den Ton von Videos verwendet.</string>
     <string name="permission_grant">Erlauben</string>
+    <string name="no_camera">Keine Kamera gefunden. Dieses Telefon oder dieses ROM hat keinen Kameratreiber (HAL), den Android nutzen kann.</string>
     <string name="no_viewer">Keine App kann diese Datei öffnen</string>
     <string name="settings_mf">Multi-Frame-Verarbeitung (RAW-Serie)</string>
     <string name="settings_mf_frames">BILDER PRO FOTO</string>

@@ -156,6 +156,13 @@ fun CameraScreen(
             },
             modifier = Modifier.align(if (portrait) Alignment.TopCenter else Alignment.CenterStart).size(vfWidth, vfHeight),
         )
+        if (st.noCamera) {
+            BasicText(
+                stringResource(R.string.no_camera),
+                style = TextStyle(color = Color.White, fontSize = 17.sp, textAlign = TextAlign.Center),
+                modifier = Modifier.align(Alignment.Center).padding(32.dp),
+            )
+        }
 
         // Manual control chips: along the bottom in landscape, above the shutter bar in portrait
         // (hidden there while a dial is open, as the ring covers them).

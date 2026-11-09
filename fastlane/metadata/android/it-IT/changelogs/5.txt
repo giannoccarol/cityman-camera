@@ -1,0 +1,6 @@
+0.4.0
+- Funziona su Android 11 e 12 (prima da Android 13)
+- Le funzioni si spengono da sole dove il telefono non le regge: il multi-frame richiede RAW, esposizione manuale e OpenGL ES 3.1; il fuoco manuale un HAL che accetti la distanza di fuoco
+- Se la GPU non riesce a eseguire gli shader, il multi-frame si spegne con un messaggio invece di fallire a ogni scatto
+- Le impostazioni dicono perché il multi-frame è spento e mostrano livello HAL, RAW, OpenGL ES e versione di Android
+- Un messaggio quando il telefono non ha nessuna fotocamera

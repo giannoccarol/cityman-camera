@@ -7,6 +7,7 @@
     <string name="format_full">Completo</string>
     <string name="permission_needed">Arco necesita la cámara para hacer fotos. El micrófono se usa para el sonido de los vídeos.</string>
     <string name="permission_grant">Permitir</string>
+    <string name="no_camera">No se encontró ninguna cámara. Este teléfono o ROM no tiene un controlador de cámara (HAL) que Android pueda usar.</string>
     <string name="no_viewer">Ninguna app puede abrir este archivo</string>
     <string name="settings_mf">Procesado multi-frame (ráfaga RAW)</string>
     <string name="settings_mf_frames">FOTOGRAMAS POR FOTO</string>

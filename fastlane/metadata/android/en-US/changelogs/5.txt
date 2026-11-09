@@ -1,0 +1,6 @@
+0.4.0
+- Runs on Android 11 and 12 (was Android 13+)
+- Features turn off by themselves where the phone cannot run them: multi-frame needs RAW, manual exposure and OpenGL ES 3.1; manual focus needs a HAL that takes the focus distance
+- If the GPU cannot run the multi-frame shaders, multi-frame turns off with a message instead of failing every shot
+- Settings show why multi-frame is off, and the camera's hardware level, RAW, OpenGL ES and Android version
+- A message when the phone has no camera at all

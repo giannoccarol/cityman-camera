@@ -60,6 +60,8 @@ data class CameraState(
     val caps: CameraCaps? = null,
     val cameraIndex: Int = 0,
     val cameraCount: Int = 0,
+    /** Camera permission granted but the system lists no camera (no camera HAL). */
+    val noCamera: Boolean = false,
     val mode: CaptureMode = CaptureMode.PHOTO,
     val format: PhotoFormat = PhotoFormat.FULL,
     val saveDng: Boolean = false,
@@ -283,7 +285,7 @@ class CameraController(private val context: Context) {
         startGyro()
         if (_state.value.saveLocation) startLocation()
         if (_state.value.level) startTilt()
-        _state.update { it.copy(cameraCount = cameraIds.size) }
+        _state.update { it.copy(cameraCount = cameraIds.size, noCamera = cameraIds.isEmpty()) }
         camHandler.post { openCamera() }
         ioHandler.post { loadLatestThumbnail() }
     }
