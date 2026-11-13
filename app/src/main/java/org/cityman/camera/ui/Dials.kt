@@ -1,5 +1,6 @@
 package org.cityman.camera.ui
 
+import android.hardware.camera2.CameraMetadata
 import org.cityman.camera.camera.CameraCaps
 import org.cityman.camera.camera.LiveValues
 import org.cityman.camera.camera.ManualControls
@@ -156,7 +157,12 @@ object Dials {
     /** Main text and the smaller live reading for a control chip. */
     fun chipText(kind: DialKind, caps: CameraCaps?, c: ManualControls, live: LiveValues): Pair<String, String?> {
         if (caps == null) return "—" to null
-        if (spec(kind, caps) == null) return (if (kind == DialKind.FOCUS) "FIXED" else "—") to null
+        if (spec(kind, caps) == null) return when {
+            kind != DialKind.FOCUS -> "—"
+            // Autofocus without manual focus (camera HAL1 through the legacy layer)
+            caps.afModes.any { it != CameraMetadata.CONTROL_AF_MODE_OFF && it != CameraMetadata.CONTROL_AF_MODE_EDOF } -> "AUTO"
+            else -> "FIXED"
+        } to null
         return when (kind) {
             DialKind.WB -> c.wbKelvin?.let { "${it.roundToInt()}K" to null }
                 ?: ("AUTO" to live.kelvin?.let { "${(it / 100).roundToInt() * 100}K" })
