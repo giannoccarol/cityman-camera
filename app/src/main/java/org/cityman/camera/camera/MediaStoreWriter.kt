@@ -12,17 +12,19 @@ import android.net.Uri
 import android.os.Environment
 import android.provider.MediaStore
 import java.io.OutputStream
-import java.text.SimpleDateFormat
-import java.util.Date
+import java.time.Instant
+import java.time.ZoneId
+import java.time.format.DateTimeFormatter
 import java.util.Locale
 
 /** Writes photos and videos to DCIM/Camera through MediaStore (no storage permission needed). */
 class MediaStoreWriter(context: Context) {
     private val resolver: ContentResolver = context.contentResolver
-    private val stamp = SimpleDateFormat("yyyyMMdd_HHmmss_SSS", Locale.US)
+    // Thread safe (called from the camera and the io thread), unlike SimpleDateFormat.
+    private val stamp = DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss_SSS", Locale.US)
 
     fun baseName(prefix: String, time: Long = System.currentTimeMillis()): String =
-        prefix + "_" + stamp.format(Date(time))
+        prefix + "_" + stamp.format(Instant.ofEpochMilli(time).atZone(ZoneId.systemDefault()))
 
     /** Inserts a pending entry; the caller writes with [write] and then calls [publish]. */
     fun createImage(name: String, mime: String): Uri? {

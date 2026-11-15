@@ -271,7 +271,8 @@ class CameraController(private val context: Context) {
     private var afTriggeredForShot = false
     private var shot: Shot? = null
 
-    private class Shot(val orientation: Int, val rawExpected: Boolean, val startedAt: Long, val burst: Boolean = false) {
+    /** [caps]: the camera the shot was taken with (the DNG may be written after a switch). */
+    private class Shot(val caps: CameraCaps, val orientation: Int, val rawExpected: Boolean, val startedAt: Long, val burst: Boolean = false) {
         var jpegDone = false
         var rawDone = false
         var raw: Image? = null
@@ -1279,7 +1280,7 @@ class CameraController(private val context: Context) {
         // Rapid fire takes standard photos (no multi-frame, no DNG), focusing only before the first.
         val mf = _state.value.multiFrame && c.multiFrameReady && rawReader != null && !rapid
         // The RAW reader also exists for multi-frame: a DNG only when the user asked for one.
-        shot = Shot(jpegOrientation(c), rawReader != null && !mf && !rapid && _state.value.saveDng, SystemClock.elapsedRealtime(), mf)
+        shot = Shot(c, jpegOrientation(c), rawReader != null && !mf && !rapid && _state.value.saveDng, SystemClock.elapsedRealtime(), mf)
         _state.update { it.copy(capturing = true) }
         analyzer?.paused = true
         val needAf = !(rapid && _state.value.rapidCount > 0) && c.hasAutoFocus && controls.focusDiopters == null && focusRegion == null &&
@@ -1439,7 +1440,7 @@ class CameraController(private val context: Context) {
             current.raw = null
             r to res
         }
-        val c = caps
+        val c: CameraCaps? = current.caps
         try {
             if (c != null) {
                 val uri = store.createImage(store.baseName("IMG") + ".dng", "image/x-adobe-dng") ?: error("MediaStore insert failed")
@@ -1492,7 +1493,7 @@ class CameraController(private val context: Context) {
     /** What goes into the EXIF of a multi-frame photo. */
     internal data class ShotInfo(val iso: Int, val exposureNs: Long, val frames: Int, val fNumber: Float?, val focalMm: Float?)
 
-    private class Burst(val total: Int, val setup: BurstSetup, val info: ShotInfo, val plannedNormal: Double) {
+    private class Burst(val caps: CameraCaps, val total: Int, val setup: BurstSetup, val info: ShotInfo, val plannedNormal: Double) {
         /** gpu thread */
         var received = 0
         /** Capture results by sensor timestamp, to match each RAW frame with its own metadata. */
@@ -1683,7 +1684,7 @@ class CameraController(private val context: Context) {
             fNumber = c.chars[CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES]?.firstOrNull(),
             focalMm = c.chars[CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.firstOrNull()?.takeIf { it > 0f },
         )
-        val job = Burst(plan.frames + plan.shortFrames, setup, info, plan.iso.toDouble() * plan.exposureNs)
+        val job = Burst(c, plan.frames + plan.shortFrames, setup, info, plan.iso.toDouble() * plan.exposureNs)
         if (_state.value.saveBursts) {
             job.dumpDir = context.getExternalFilesDir("bursts")?.let { java.io.File(it, store.baseName("burst")) }?.also { it.mkdirs() }
         }
@@ -1895,8 +1896,7 @@ class CameraController(private val context: Context) {
             // Merged DNG first (it needs the accumulator, which finishing frees).
             if (_state.value.saveDng) {
                 val raw = runCatching { processor.mergedRaw() }.onFailure { Log.e(TAG, "merged raw", it) }.getOrNull()
-                val c = caps
-                if (raw != null && c != null) ioHandler.post { saveMergedDng(c, result, raw, job.setup) }
+                if (raw != null) ioHandler.post { saveMergedDng(job.caps, result, raw, job.setup) }
             }
             job.dumpDir?.let { dir ->
                 runCatching {
