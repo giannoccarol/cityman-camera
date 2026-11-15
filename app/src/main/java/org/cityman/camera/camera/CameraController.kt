@@ -1754,7 +1754,8 @@ class CameraController(private val context: Context) {
             // exposures plus a margin, finish with the frames that did arrive.
             val exposureMs = (plan.frames * plan.exposureNs + plan.shortFrames * plan.shortExposureNs) / 1_000_000L
             job.timeout = Runnable {
-                if (job.finished) return@Runnable
+                // All frames in and a result to finish with: the GPU is just still merging.
+                if (job.finished || (job.arrived >= job.expected && job.firstResult != null)) return@Runnable
                 Log.w(TAG, "burst timeout: ${job.arrived} of ${job.expected} frames arrived, result ${job.firstResult != null}")
                 job.expected = min(job.expected, job.arrived)
                 if (job.firstResult == null) job.failed = true
