@@ -701,10 +701,13 @@ def merged(meta, frames, method):
         offsets.append(align(pyrs[0], p))
     noise = fit_noise(qs[0], warp(qs[1], offsets[1])) if len(qs) > 1 else (1e-4, 1e-6)
     if method == "single" or len(qs) == 1:
+        merged.wsum = np.ones(qs[0].shape[:2])
         return qs[0], qs, offsets, noise
+    merged.wsum = np.full(qs[0].shape[:2], float(len(qs)))
     if method == "wiener":
         return merge_wiener(qs, offsets, noise), qs, offsets, noise
-    return merge_robust(qs, offsets, noise)[0], qs, offsets, noise
+    mq, merged.wsum = merge_robust(qs, offsets, noise)
+    return mq, qs, offsets, noise
 
 
 def cmd_develop(args):
@@ -712,10 +715,23 @@ def cmd_develop(args):
     HOT_CROSS = args.hot == "cross"
     meta, frames = load_burst(args.burst)
     mq, _, _, noise = merged(meta, frames, args.merge)
+    if args.noise:
+        noise = tuple(args.noise)
     opts = dict(compress=args.compress, lift=args.lift, black=args.black, contrast=args.contrast, sat=args.sat)
-    img = finish(mq, meta, meta["gains"], meta["ccm"], opts, tone=args.tone)
-    Image.fromarray(img).save(args.output, quality=95)
-    print("noise a=%.3g b=%.3g -> %s" % (noise[0], noise[1], args.output))
+    variants = args.denoise.split(",")
+    for dn in variants:
+        out_path = args.output if len(variants) == 1 else "%s_%s%s" % (os.path.splitext(args.output)[0], dn, os.path.splitext(args.output)[1])
+        m = mq
+        if dn != "none":
+            # as PREP: shading and white balance applied, clipped, then the spatial denoise
+            h, w = mq.shape[:2]
+            k = lens_shading(meta, h, w) * np.array(meta["gains"])
+            v = np.minimum(np.clip(mq, 0, None) * k, k.min(-1, keepdims=True))
+            fn = denoise_app if dn == "old" else (lambda *a: denoise_ms(*a, grain=DN_GRAIN))
+            m = fn(v, merged.wsum, noise, k) / k
+        img = finish(m, meta, meta["gains"], meta["ccm"], opts, tone=args.tone)
+        Image.fromarray(img).save(out_path, quality=95)
+        print("denoise %s, noise a=%.3g b=%.3g -> %s" % (dn, noise[0], noise[1], out_path))
     if args.compare:
         for name in ("hal.jpg", "arco.jpg"):
             p = os.path.join(args.burst, name)
@@ -877,6 +893,10 @@ def main():
     p.add_argument("--contrast", type=float, default=0.35)
     p.add_argument("--sat", type=float, default=1.15)
     p.add_argument("--compare", action="store_true", help="side by side with hal.jpg and arco.jpg")
+    p.add_argument("--denoise", default="none",
+                   help="spatial denoise, or several separated by commas: none, old (bilateral up to 0.4.0), ms (the app's)")
+    p.add_argument("--noise", type=float, nargs=2, metavar=("A", "B"),
+                   help="noise model to use instead of the lab's fit (the app logs its own: 'noise [a, b]')")
     p.set_defaults(func=cmd_develop)
     p = sub.add_parser("sr")
     p.add_argument("burst")
