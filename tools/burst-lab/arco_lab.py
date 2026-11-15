@@ -196,18 +196,32 @@ def fit_noise(ref, alt):
 # ---------------------------------------------------------------------------
 # Merges
 
+def smoothstep(e0, e1, x):
+    t = np.clip((x - e0) / (e1 - e0), 0, 1)
+    return t * t * (3 - 2 * t)
+
+
 def merge_robust(qs, offsets, noise, strength=0.8, hdr_short=0):
-    """As MERGE_DECIDE + MERGE_ADD: weight from the local grey difference against the noise."""
+    """
+    As INIT + MERGE_DECIDE + MERGE_ADD: weight from the local grey difference against the noise.
+    With `hdr_short` highlight frames at the end of `qs` (already scaled to the reference
+    exposure), near-white reference pixels hand over to them and the normal frames stay out there.
+    """
     ref = qs[0]
     a, b = noise
-    acc, wsum = ref.copy(), np.ones(ref.shape[:2])
+    hl = smoothstep(0.85, 0.97, ref.max(-1)) if hdr_short else np.zeros(ref.shape[:2])
+    w0 = np.maximum(1 - hl, 0.001)
+    acc, wsum = ref * w0[..., None], w0.copy()
     gref = gray(ref)
     sigma = np.sqrt(a * np.clip(gref, 0, None) + b)
-    for q, o in zip(qs[1:], offsets[1:]):
+    n = len(qs)
+    for i, (q, o) in enumerate(zip(qs[1:], offsets[1:]), start=1):
         w_alt = warp(q, o)
         diff = ndimage.uniform_filter(np.abs(gray(w_alt) - gref), 4)
         dn = diff / (0.5 * sigma)
         w = np.exp(-np.square(np.maximum(dn - 1.3, 0) / strength))
+        if hdr_short:
+            w = w * (hl if i >= n - hdr_short else 1 - hl)
         acc += w[..., None] * w_alt
         wsum += w
     return acc / wsum[..., None], wsum
@@ -353,7 +367,7 @@ def denoise_ms(mq, wsum, noise, k, levels=DN_LEVELS_MS, t_luma=DN_T_LUMA, t_chro
     model, the shading/white balance gains and the number of merged frames, evaluated on the next
     coarser level (a smoothed brightness), so no variance pyramid is stored. Coarse bands carry the
     blotchy low-frequency noise a 5×5 filter cannot reach. `grain` puts back that fraction of the
-    removed fine grey noise (Windows' "noise restoration"), so flat areas do not look waxy.
+    removed fine grey noise (a film-grain style "noise restoration"), so flat areas do not look waxy.
     """
     a, b = noise
     gains = _band_gains(levels)
@@ -496,11 +510,19 @@ def local_laplacian_log(logl, sigma=1.0, alpha=0.6, levels=5, k=8):
     return out
 
 
-def finish(mq, meta, gains, ccm, opts, tone="app"):
+def clip_level(k, meta, wsum):
+    """As PREP: the lowest channel's saturation, raised for highlight frames only where they were merged."""
+    scale = meta.get("shortScale", 4) if meta.get("shortFrames", 0) else 1
+    if wsum is not None and scale != 1:
+        scale = 1 + (scale - 1) * smoothstep(0.1, 0.6, wsum)[..., None]
+    return k.min(-1, keepdims=True) * scale
+
+
+def finish(mq, meta, gains, ccm, opts, tone="app", wsum=None):
     """Merged quad (normalised, before shading/WB) → sRGB uint8, as the app's finishing."""
     h, w = mq.shape[:2]
     k = lens_shading(meta, h, w) * np.array(gains)
-    clip = k.min(-1, keepdims=True) * (meta.get("shortScale", 4) if meta.get("shortFrames", 0) else 1)
+    clip = clip_level(k, meta, wsum)
     v = np.minimum(np.clip(mq, 0, None) * k, clip)
     chan_at = meta["chanAt"]
     rgb = demosaic_malvar(mosaic_from_quad(v, chan_at), chan_at)
@@ -694,7 +716,9 @@ def psnr(a, b):
 # Commands
 
 def merged(meta, frames, method):
-    qs = [to_quad(f, meta) for f in frames]
+    n, short = len(frames), meta.get("shortFrames", 0)
+    # the last `short` frames are the highlight frames, scaled to the reference exposure (as PACK)
+    qs = [to_quad(f, meta, scale=meta.get("shortScale", 4) if i >= n - short else 1.0) for i, f in enumerate(frames)]
     pyrs = [pyramid(gray(q)) for q in qs]
     offsets = [np.zeros((math.ceil(qs[0].shape[0] / 16), math.ceil(qs[0].shape[1] / 16), 2))]
     for p in pyrs[1:]:
@@ -706,7 +730,7 @@ def merged(meta, frames, method):
     merged.wsum = np.full(qs[0].shape[:2], float(len(qs)))
     if method == "wiener":
         return merge_wiener(qs, offsets, noise), qs, offsets, noise
-    mq, merged.wsum = merge_robust(qs, offsets, noise)
+    mq, merged.wsum = merge_robust(qs, offsets, noise, hdr_short=short)
     return mq, qs, offsets, noise
 
 
@@ -726,10 +750,10 @@ def cmd_develop(args):
             # as PREP: shading and white balance applied, clipped, then the spatial denoise
             h, w = mq.shape[:2]
             k = lens_shading(meta, h, w) * np.array(meta["gains"])
-            v = np.minimum(np.clip(mq, 0, None) * k, k.min(-1, keepdims=True))
+            v = np.minimum(np.clip(mq, 0, None) * k, clip_level(k, meta, merged.wsum))
             fn = denoise_app if dn == "old" else (lambda *a: denoise_ms(*a, grain=DN_GRAIN))
             m = fn(v, merged.wsum, noise, k) / k
-        img = finish(m, meta, meta["gains"], meta["ccm"], opts, tone=args.tone)
+        img = finish(m, meta, meta["gains"], meta["ccm"], opts, tone=args.tone, wsum=merged.wsum)
         Image.fromarray(img).save(out_path, quality=95)
         print("denoise %s, noise a=%.3g b=%.3g -> %s" % (dn, noise[0], noise[1], out_path))
     if args.compare:

@@ -337,7 +337,11 @@ void main() {
     vec4 k = lsc * uGains;
     // Sensor saturation lands at a different level in each channel once shading and white
     // balance gains are applied; clip all of them to the lowest so blown highlights stay white.
-    float clipLevel = min(min(k.x, k.y), min(k.z, k.w)) * uClipScale;
+    // With highlight frames the level goes up uClipScale times, but only where they were
+    // merged: where they were rejected (motion, noise) the blown reference is all that is left
+    // (weight 0.001 + rejected frames), and above the normal level it turns magenta (green
+    // saturates first, red and blue keep rising after the white balance gains).
+    float clipLevel = min(min(k.x, k.y), min(k.z, k.w)) * mix(1.0, uClipScale, smoothstep(0.1, 0.6, w));
     v = min(max(v, 0.0) * k, vec4(clipLevel));
     imageStore(uMq, p, v);
     imageStore(uHalf, p, vec4(v.x, 0.5 * (v.y + v.z), v.w, 1.0));
