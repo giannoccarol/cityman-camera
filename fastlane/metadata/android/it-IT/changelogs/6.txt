@@ -1,0 +1,5 @@
+0.5.0
+- Nuova riduzione del rumore del multi-frame: lavora su più scale, toglie le macchie di rumore delle foto al buio e conserva il dettaglio fine (testo, foglie) che il vecchio filtro appiattiva; lascia un po' di grana fine invece dell'effetto cera
+- Le alte luci bruciate restano bianche: niente più magenta su schermi e lampade luminosi quando i fotogrammi per le alte luci non si possono usare
+- Il DNG si salva solo con l'opzione DNG accesa (la raffica con il multi-frame acceso salvava un DNG da 40 MB per foto)
+- L'indicatore del fuoco dice AUTO e non FISSO sulle fotocamere con autofocus ma senza fuoco manuale (HAL legacy)

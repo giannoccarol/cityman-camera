@@ -1,0 +1,5 @@
+0.5.0
+- New multi-frame noise reduction: works at several scales, so it removes the blotchy noise of dark shots while keeping fine detail (text, foliage) that the old filter flattened, and leaves a little fine grain instead of a waxy look
+- Blown highlights stay white: no more magenta on bright screens and lamps when the highlight frames cannot be used
+- No DNG is saved unless the DNG option is on (rapid fire with multi-frame on saved a 40 MB DNG per photo)
+- The focus chip says AUTO, not FIXED, on cameras with autofocus but no manual focus (legacy HAL)

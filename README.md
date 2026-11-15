@@ -234,8 +234,9 @@ of RAW frames and merges them on the GPU (OpenGL ES 3.1 compute shaders, `proces
    profile.
 4. **Finishing**: lens shading map from the capture result, white balance gains and colour
    matrix of the HAL's auto white balance, highlight clipping to a common level (no magenta
-   highlights), bilateral spatial noise reduction guided by the noise model and the number of
-   merged frames, Malvar-He-Cutler demosaic, colour noise reduction (full-resolution luminance
+   highlights), multi-scale spatial noise reduction (opponent colour space, Laplacian pyramid,
+   a local Wiener gain per band from the noise model and the number of merged frames, a little
+   fine grain put back so flat areas do not look waxy), Malvar-He-Cutler demosaic, colour noise reduction (full-resolution luminance
    with blurred chroma, added as a luminance difference), local tone mapping (fine and coarse
    log-luminance base layers, the fine one near strong edges; highlights compressed more than
    shadows are lifted, more so in backlit scenes), black point, highlight shoulder, saturation,

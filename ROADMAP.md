@@ -24,6 +24,25 @@ Ultima release provata: **v0.1.1** (GitHub, 31/10). Dopo: 0.2.0 e 0.3.0 compilat
 | Test e CI | 16 test JVM, GitHub Actions | build + test a ogni push; piano del burst estratto e testato |
 | Taratura | laboratorio Python (`tools/burst-lab`) | burst RAW salvati dall'app (opzione sviluppatore), prototipi misurati su dati sintetici |
 
+### Riduzione del rumore multi-scala (15/11, release 0.5.0)
+
+Il bilaterale 5×5 sul grigio è sostituito da una riduzione del rumore multi-scala (spazio
+opponente, piramide di Laplace a 4 livelli, guadagno di Wiener locale per banda dal modello di
+rumore, un po' di grana fine rimessa). Sulle raffiche sintetiche del laboratorio (`dnbench`) il
+bilaterale perdeva 3-5 dB di dettaglio fine rispetto a nessun filtro; il nuovo lo conserva e
+guadagna 2-5 dB in totale. Sul 950 XL (A16) due raffiche vere: nessun errore della GPU, rumore
+residuo 5-36 % più basso del bilaterale sviluppato nel laboratorio sugli stessi RAW; il dettaglio
+fine non è ancora stato confrontato su una scena nitida. Da capire: la foto del telefono è più
+rumorosa dello sviluppo del laboratorio nelle zone scure.
+
+Nella stessa release: alte luci bruciate di nuovo bianche dove i fotogrammi corti vengono scartati
+(prima magenta sulle scritte bianche degli schermi; meccanismo misurato sul laboratorio, 28-35 %
+dei pixel bruciati di una raffica vera senza fotogrammi corti; sul telefono le foto successive non
+riproducevano più la condizione, quindi la correzione non è ancora confermata sull'hardware) e DNG
+salvato solo con l'opzione DNG accesa. Revisione del 15/11 con altri punti aperti (metadati per
+fotogramma, timeout della raffica, fuoco non bloccato durante la raffica, memoria del lettore RAW,
+frange a scacchiera sui bordi molto contrastati, modello del rumore): da pianificare.
+
 ### Android 11 e 12 (9/11, release 0.4.0)
 
 `minSdk` da 33 a 30: Arco si installa su Android 11 (950 XL con LineageOS 18.1, Lumia 1520 e 930).
