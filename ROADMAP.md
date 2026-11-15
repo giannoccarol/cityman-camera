@@ -54,9 +54,28 @@ persi né il blocco del fuoco a metà raffica (effetto non misurato).
 Lasciato fuori (branch locale `wip/raw-buffers-close`): rilascio dei buffer RAW a fine raffica e
 chiusura della sessione senza attendere la GPU. Durante la prova, uscendo dall'app a metà raffica,
 l'HAL ha rifiutato le richieste (`-38`), cameraserver ha chiuso il provider e la fotocamera è
-sparita fino al riavvio. Non verificato se succede anche con la 0.5.0: da riprovare con le due
-versioni prima di riprendere quel commit. Il guadagno di memoria non è misurabile con
-`MemAvailable` (oscilla di centinaia di MB).
+sparita fino al riavvio. Il guadagno di memoria non è misurabile con `MemAvailable` (oscilla di
+centinaia di MB).
+
+Blocco dopo lo scatto (15/11, notte): succede anche con la 0.5.0, quindi quel commit non era la
+causa. Chiudere la fotocamera mentre una raffica notturna è ancora in esposizione (12 × 0,5 s)
+blocca l'HAL: il flush che cameraserver fa alla chiusura non ritorna (`STREAMOFF failed: Connection
+timed out` ogni 10 s), dopo circa 65 s il watchdog di cameraserver va in abort "during flush", il
+provider resta in stato D nel kernel e il sistema vede 0 fotocamere fino al riavvio. Togliere
+`abortCaptures()` non cambia nulla (provato). Riprodotto due volte aprendo la galleria dalla
+miniatura a metà raffica. Corretto: miniatura, cambio fotocamera e cambio modalità aspettano la
+fine dello scatto. **Aperto:** Home o tasto di accensione durante una raffica lunga possono ancora
+bloccarla; servirebbe tenere la fotocamera aperta fino all'ultimo fotogramma, ma Android toglie
+l'accesso all'app non più visibile.
+
+Animazione del tasto (stessa sera): durante la fusione l'interfaccia saltava fino a 226 fotogrammi
+di fila. Il thread principale non era occupato: aspettava di disegnare dietro i passaggi di calcolo
+della GPU, che l'Adreno 430 non interrompe. Ora i passaggi grandi vanno a fasce di righe con una
+sola fascia in volo: scatto di prova senza fotogrammi saltati, fusione in 6,0 s come prima. Il tasto
+mostra l'avanzamento vero (fotogrammi fusi, poi passaggio finale) e un respiro lento al posto dello
+spinner veloce. **Aperto:** un secondo scatto subito dopo il primo trova il telefono sotto pressione
+di memoria (lmkd a pressione media, 600 MB disponibili): un fotogramma impiega 4,6 s, 3 fotogrammi
+su 10 vanno persi e l'interfaccia salta di nuovo. Da riprendere con il rilascio dei buffer RAW.
 
 ### Android 11 e 12 (9/11, release 0.4.0)
 
