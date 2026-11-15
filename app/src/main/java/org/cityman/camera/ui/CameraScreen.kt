@@ -632,7 +632,7 @@ private fun ShutterBar(
                     .clip(RoundedCornerShape(10.dp))
                     .border(1.5.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(10.dp))
                     .background(Color.White.copy(alpha = 0.08f))
-                    .clickable(enabled = state.lastUri != null, onClick = onGallery)
+                    .clickable(enabled = state.lastUri != null && !state.capturing, onClick = onGallery)
                     .semantics { contentDescription = galleryDesc; role = Role.Button },
             ) {
                 if (thumb != null) {

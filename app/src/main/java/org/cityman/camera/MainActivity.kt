@@ -251,6 +251,9 @@ class MainActivity : ComponentActivity() {
      * the secure variant shows only what the camera gives it.
      */
     private fun openMedia(uri: Uri, video: Boolean) {
+        // Leaving while a shot is exposing makes the camera close mid-capture, which this HAL
+        // does not survive (see CameraController.setMode); the photo would be lost too.
+        if (controller.state.value.capturing) return
         val locked = getSystemService(KeyguardManager::class.java)?.isKeyguardLocked == true
         val mime = if (video) "video/mp4" else "image/jpeg"
         val pkg = controller.state.value.galleryPackage

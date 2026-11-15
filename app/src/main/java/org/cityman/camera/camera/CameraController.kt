@@ -317,7 +317,7 @@ class CameraController(private val context: Context) {
     // ---- public actions -----------------------------------------------------------------
 
     fun switchCamera() = camHandler.post {
-        if (cameraIds.size < 2) return@post
+        if (cameraIds.size < 2 || shot != null) return@post
         closeCamera()
         analysisRefused = false
         controls = ManualControls()
@@ -344,7 +344,10 @@ class CameraController(private val context: Context) {
     }
 
     fun setMode(mode: CaptureMode) = camHandler.post {
-        if (_state.value.mode == mode) return@post
+        // Closing the session while a still is still exposing (0.5 s frames in night bursts)
+        // wedges this HAL: cameraserver's flush never returns and its watchdog kills the camera
+        // provider, leaving no camera until reboot. Wait for the shot to end.
+        if (_state.value.mode == mode || shot != null) return@post
         if (recorder != null) stopRecording(restartPreview = false)
         clearTapRegions()
         _state.update { it.copy(mode = mode) }
