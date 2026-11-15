@@ -60,6 +60,32 @@ the quad grid.
 
 Nothing from these prototypes is in the app yet: each one waits for a comparison on real bursts.
 
+## Spatial denoise (15 November 2026)
+
+`python3 arco_lab.py dnbench OUT_DIR` makes synthetic bursts at three noise levels (`low`, `mid`,
+`high`) and 1, 3 and 8 frames, merges them and runs each spatial denoise variant on the merged quad
+image. It reports PSNR against the truth over the whole chart, over the textured background and
+over the fine detail (zone plate and bars), plus SSIM of the grey level, and writes crops side by
+side. By default the variants get the true noise; `--fitted-noise` uses the noise fitted from the
+burst, as the app does.
+
+| Variant | Result |
+|---|---|
+| Old app denoise (5×5 bilateral on the grey level, up to 0.4.0) | best SSIM on the smooth background, but fine detail **3-5 dB below no denoise at all**: the grey guide (mean of a 2×2 block) does not see detail near the Nyquist limit, so each colour plane is smoothed over 10×10 raw pixels; false colour on the zone plate |
+| Multi-scale (opponent space, Laplacian pyramid, local Wiener gain per band) | overall PSNR +2 to +5 dB against the old denoise at every level, fine detail kept (above no denoise), texture within ±0.7 dB of the old denoise, SSIM 0.003-0.03 lower at high noise |
+| Threshold for grey 0.7 / 1.0 / 1.4 | within 0.1 dB; 1.4 smoother at high noise. The app uses 1.2 |
+| Threshold for colour 3 instead of 2 | always worse (−0.2 to −0.9 dB) |
+| Grain put back (0.15 of the removed fine grey noise) | same PSNR, slightly lower SSIM, by design; the app keeps 0.1 |
+| Bilateral for the finest band, multi-scale for the coarse ones | as bad as the bilateral alone on fine detail |
+| Colour step of the finish: guided filter instead of the blurred half image | worse colour error (up to −2 dB), so the blur stays |
+
+The multi-scale denoise is in the app since this date (`DN_DOWN`, `DN_UP`). It has not been
+compared on real bursts yet.
+
+The noise fitted from a synthetic burst is 3-9 times too high (the residual of the texture between
+two frames counts as noise), which makes any denoise smooth too much. On real bursts this is still
+to be checked against flat areas.
+
 ## References
 
 - Hasinoff et al., *Burst photography for high dynamic range and low-light imaging on mobile

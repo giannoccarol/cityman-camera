@@ -344,48 +344,102 @@ void main() {
 }
 """
 
-    /**
-     * Spatial noise reduction of the merged quad image: a 5×5 bilateral filter guided by the
-     * grey level, its range set from the noise model, the lens shading and white balance gains
-     * and the number of frames that went into each pixel.
+    /*
+     * Spatial noise reduction of the merged quad image, multi-scale: the quad channels go to an
+     * opponent space (grey, R−G, B−G, Ge−Go), a Laplacian pyramid splits them into bands, and
+     * each band coefficient is scaled by a local Wiener gain E / (E + t²σ²). E is the 3×3 mean
+     * of the squared coefficients minus σ², σ² the band's noise from the noise model, the lens
+     * shading and white balance gains and the number of merged frames. The coarse bands remove
+     * the blotchy low-frequency noise; the finest band keeps detail a 5×5 bilateral would
+     * flatten (fine text, foliage, colour near the Nyquist limit). Prototype and measurements:
+     * tools/burst-lab (denoise_ms, dnbench).
      */
-    val DENOISE = GRID + """
-layout(rgba16f, binding = 0) readonly uniform image2D uMq;
+    private const val OPP = """
+vec4 opp(vec4 c) {
+    float gm = 0.5 * (c.y + c.z);
+    return vec4(dot(c, vec4(0.25)), c.x - gm, c.w - gm, c.y - c.z);
+}
+vec4 oppInv(vec4 o) {
+    float gm = o.x - 0.25 * (o.y + o.z);
+    return vec4(o.y + gm, gm + 0.5 * o.w, gm - 0.5 * o.w, o.z + gm);
+}
+"""
+
+    /** Pyramid level down: 5×5 binomial blur, every second texel (opponent transform at level 0). */
+    val DN_DOWN = GRID + OPP + """
+layout(rgba16f, binding = 0) readonly uniform image2D uSrc;
+layout(rgba16f, binding = 1) writeonly uniform image2D uDst;
+uniform int uFromQuad;
+void main() {
+    ivec2 p = ivec2(gl_GlobalInvocationID.xy);
+    if (any(greaterThanEqual(p, imageSize(uDst)))) return;
+    ivec2 s = imageSize(uSrc) - 1;
+    const float w[5] = float[5](0.0625, 0.25, 0.375, 0.25, 0.0625);
+    vec4 acc = vec4(0.0);
+    for (int y = -2; y <= 2; y++)
+        for (int x = -2; x <= 2; x++)
+            acc += w[x + 2] * w[y + 2] * imageLoad(uSrc, clamp(2 * p + ivec2(x, y), ivec2(0), s));
+    imageStore(uDst, p, uFromQuad == 1 ? opp(acc) : acc);
+}
+"""
+
+    /**
+     * Pyramid level up: this level's band (fine minus the upsampled coarser level), shrunk by the
+     * local Wiener gain, added to the already denoised coarser level. At level 0 the fine image
+     * is the quad image itself and the result goes back to quad channels.
+     */
+    val DN_UP = GRID + OPP + """
+layout(rgba16f, binding = 0) readonly uniform image2D uFine;
 layout(r32f, binding = 1) readonly uniform image2D uW;
 layout(rgba16f, binding = 2) writeonly uniform image2D uOut;
+uniform sampler2D uCoarse;      // next coarser pyramid level
+uniform sampler2D uCoarseOut;   // next coarser level, denoised (the coarsest level itself at the top)
 uniform sampler2D uLsc;
 uniform vec2 uLscSize;
 uniform vec4 uGains;
 uniform vec2 uNoise;
-uniform float uStrength;
+uniform float uBandGain2;       // variance of this band for unit white noise
+uniform vec4 uT2;               // threshold² for grey and the three colour differences
+uniform float uGrain;           // fraction of the removed fine grey noise put back (level 0)
+uniform int uFromQuad;
+ivec2 gS;
+vec2 gInv;
+vec4 fine(ivec2 q) {
+    vec4 v = imageLoad(uFine, clamp(q, ivec2(0), gS));
+    return uFromQuad == 1 ? opp(v) : v;
+}
+vec4 band(ivec2 q) {
+    q = clamp(q, ivec2(0), gS);
+    return fine(q) - texture(uCoarse, (vec2(q) + 0.5) * gInv);
+}
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy);
     ivec2 size = imageSize(uOut);
     if (any(greaterThanEqual(p, size))) return;
-    vec2 pos = (vec2(p) + 0.5) / vec2(size);
-    vec2 uv = (pos * (uLscSize - 1.0) + 0.5) / uLscSize;
-    vec4 k = clamp(texture(uLsc, uv), 1.0, 8.0) * uGains;
-    vec4 c = imageLoad(uMq, p);
-    float frames = max(imageLoad(uW, p).r, 1.0);
-    vec4 raw = max(c / k, 0.0);
-    // Noise of the grey guide (mean of the four channels) after merging.
-    float varG = dot(k * k, uNoise.x * raw + uNoise.y) / (16.0 * frames);
-    float h = uStrength * sqrt(varG);
-    float inv = 1.0 / max(2.0 * h * h, 1.0e-12);
-    float g0 = dot(c, vec4(0.25));
-    vec4 acc = vec4(0.0);
-    float wsum = 0.0;
-    ivec2 s = size - 1;
-    for (int y = -2; y <= 2; y++) {
-        for (int x = -2; x <= 2; x++) {
-            vec4 v = imageLoad(uMq, clamp(p + ivec2(x, y), ivec2(0), s));
-            float dg = dot(v, vec4(0.25)) - g0;
-            float w = exp(-float(x * x + y * y) / 4.5 - dg * dg * inv);
-            acc += w * v;
-            wsum += w;
+    gS = size - 1;
+    gInv = 1.0 / vec2(size);
+    vec2 uv = (vec2(p) + 0.5) * gInv;
+    vec4 cu = texture(uCoarse, uv);
+    vec4 b0 = fine(p) - cu;
+    vec4 e = vec4(0.0);
+    for (int y = -1; y <= 1; y++)
+        for (int x = -1; x <= 1; x++) {
+            vec4 b = (x == 0 && y == 0) ? b0 : band(p + ivec2(x, y));
+            e += b * b;
         }
-    }
-    imageStore(uOut, p, acc / wsum);
+    e /= 9.0;
+    // Noise of this band, from the smoothed brightness of the coarser level.
+    vec4 k = clamp(texture(uLsc, (uv * (uLscSize - 1.0) + 0.5) / uLscSize), 1.0, 8.0) * uGains;
+    ivec2 ws = imageSize(uW);
+    float frames = max(imageLoad(uW, min(ivec2(uv * vec2(ws)), ws - 1)).r, 1.0);
+    vec4 raw = max(oppInv(cu) / k, 0.0);
+    vec4 v = k * k * (uNoise.x * raw + uNoise.y) / frames;
+    vec4 s2 = vec4(dot(v, vec4(0.0625)), v.x + 0.25 * (v.y + v.z), v.w + 0.25 * (v.y + v.z), v.y + v.z) * uBandGain2;
+    vec4 sig = max(e - s2, 0.0);
+    vec4 nb = sig / (sig + uT2 * s2 + 1.0e-20) * b0;
+    nb.x += uGrain * (b0.x - nb.x);
+    vec4 o = texture(uCoarseOut, uv) + nb;
+    imageStore(uOut, p, uFromQuad == 1 ? oppInv(o) : o);
 }
 """
 

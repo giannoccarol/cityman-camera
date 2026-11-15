@@ -345,18 +345,7 @@ class MultiFrameProcessor {
         var mqFinal = mq
         if (o.denoise) {
             val out = if (accCur == 0) accs!![1] else accs!![0]
-            val p = program("denoise", Shaders.DENOISE)
-            p.use()
-            mq.bindImage(0, GLES31.GL_READ_ONLY)
-            weight!!.bindImage(1, GLES31.GL_READ_ONLY)
-            out.bindImage(2, GLES31.GL_WRITE_ONLY)
-            lsc.bindSampler(0)
-            p.set("uLsc", 0)
-            p.set("uLscSize", lsc.width.toFloat(), lsc.height.toFloat())
-            p.set("uGains", gains.red, gains.greenEven, gains.greenOdd, gains.blue)
-            p.set("uNoise", noise[0], noise[1])
-            p.set("uStrength", 2.2f)
-            p.dispatch(qw, qh)
+            denoiseMultiScale(mq, out, lsc, gains)
             mqFinal = out
         }
         // The burst buffers are no longer needed: free them before the full-size images.
@@ -692,6 +681,60 @@ class MultiFrameProcessor {
     }
 
 
+    /**
+     * Multi-scale noise reduction of [mq] into [out] (see Shaders.DN_UP): pyramid down, then each
+     * level's band shrunk against the noise model and added back, coarse to fine.
+     */
+    private fun denoiseMultiScale(mq: Tex, out: Tex, lsc: Tex, gains: RggbChannelVector) {
+        val levels = ArrayList<Tex>()           // pyramid levels 1..DN_LEVELS (opponent space)
+        var w = mq.width
+        var h = mq.height
+        val down = program("dnDown", Shaders.DN_DOWN)
+        down.use()
+        var src = mq
+        for (l in 1..DN_LEVELS) {
+            w = (w + 1) / 2
+            h = (h + 1) / 2
+            val dst = Tex(w, h, GLES31.GL_RGBA16F, linear = true)
+            src.bindImage(0, GLES31.GL_READ_ONLY)
+            dst.bindImage(1, GLES31.GL_WRITE_ONLY)
+            down.set("uFromQuad", if (l == 1) 1 else 0)
+            down.dispatch(w, h)
+            levels += dst
+            src = dst
+        }
+        val up = program("dnUp", Shaders.DN_UP)
+        up.use()
+        up.set("uCoarse", 0)
+        up.set("uCoarseOut", 1)
+        up.set("uLsc", 2)
+        up.set("uLscSize", lsc.width.toFloat(), lsc.height.toFloat())
+        up.set("uGains", gains.red, gains.greenEven, gains.greenOdd, gains.blue)
+        up.set("uNoise", noise[0], noise[1])
+        val tl = DN_T_LUMA * DN_T_LUMA
+        val tc = DN_T_CHROMA * DN_T_CHROMA
+        up.set("uT2", tl, tc, tc, tc)
+        weight!!.bindImage(1, GLES31.GL_READ_ONLY)
+        lsc.bindSampler(2)
+        val outs = ArrayList<Tex>()
+        var coarseOut = levels.last()
+        for (l in DN_LEVELS - 1 downTo 0) {
+            val fine = if (l == 0) mq else levels[l - 1]
+            val dst = if (l == 0) out else Tex(fine.width, fine.height, GLES31.GL_RGBA16F, linear = true)
+            fine.bindImage(0, GLES31.GL_READ_ONLY)
+            dst.bindImage(2, GLES31.GL_WRITE_ONLY)
+            levels[l].bindSampler(0)
+            coarseOut.bindSampler(1)
+            up.set("uBandGain2", DN_BAND_GAIN[l] * DN_BAND_GAIN[l])
+            up.set("uGrain", if (l == 0) DN_GRAIN else 0f)
+            up.set("uFromQuad", if (l == 0) 1 else 0)
+            up.dispatch(fine.width, fine.height)
+            if (l > 0) outs += dst
+            coarseOut = dst
+        }
+        (levels + outs).forEach { it.release() }
+    }
+
     private fun lensShadingTexture(map: LensShadingMap?): Tex {
         val cols = map?.columnCount ?: 1
         val rows = map?.rowCount ?: 1
@@ -813,6 +856,14 @@ class MultiFrameProcessor {
         /** Pyramid: quad resolution, then /2, /4, /4 (as in HDR+). Tile 16 at the finest level. */
         // The coarse levels search ±4 and already cover large motion, so level 1 refines with ±2.
         private val LEVELS = listOf(Level(1, 16, 1), Level(2, 8, 2), Level(4, 8, 4), Level(4, 8, 4))
+
+        /** Multi-scale denoise: pyramid levels, Wiener thresholds (grey, colour), grain kept. */
+        private const val DN_LEVELS = 4
+        private const val DN_T_LUMA = 1.2f
+        private const val DN_T_CHROMA = 2.0f
+        private const val DN_GRAIN = 0.1f
+        /** Standard deviation of each Laplacian band for unit white noise (burst lab, _band_gains). */
+        private val DN_BAND_GAIN = floatArrayOf(0.9458f, 0.2321f, 0.1034f, 0.0500f)
 
         private fun Float.pow(e: Float) = Math.pow(this.toDouble(), e.toDouble()).toFloat()
 

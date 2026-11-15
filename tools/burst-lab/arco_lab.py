@@ -15,6 +15,7 @@ known ground truth to measure them.
     python3 arco_lab.py sr BURST_DIR -o crop.png [--size 512]
     python3 arco_lab.py synth OUT_DIR [--frames 8] [--image some.png]
     python3 arco_lab.py bench OUT_DIR  # synthetic burst, PSNR of each method
+    python3 arco_lab.py dnbench OUT_DIR  # spatial denoise variants at several noise levels
 
 GPL-3.0-or-later, like the app.
 """
@@ -250,6 +251,153 @@ def merge_wiener(qs, offsets, noise, c=8.0, tile=16):
             nacc[y:y + tile, x:x + tile] += win * win
     out = acc / np.maximum(nacc, 1e-6)[..., None]
     return out[step:step + h, step:step + w]
+
+# ---------------------------------------------------------------------------
+# Spatial noise reduction of the merged quad image (after lens shading and white balance)
+
+def quad_noise_var(mq, wsum, noise, k):
+    """Per pixel and channel noise variance of the merged quad image, as DENOISE models it."""
+    a, b = noise
+    raw = np.clip(mq / k, 0, None)
+    return k * k * (a * raw + b) / np.maximum(wsum, 1.0)[..., None]
+
+
+def denoise_app(mq, wsum, noise, k, strength=2.2):
+    """The app's spatial denoise up to 0.4.0 (DENOISE shader): 5×5 bilateral guided by the grey level."""
+    var = quad_noise_var(mq, wsum, noise, k)
+    h = strength * np.sqrt(var.sum(-1) / 16.0)
+    inv = 1.0 / np.maximum(2 * h * h, 1e-12)
+    g0 = mq.mean(-1)
+    pad = np.pad(mq, ((2, 2), (2, 2), (0, 0)), mode="edge")
+    H, W = mq.shape[:2]
+    acc = np.zeros_like(mq)
+    wsum_ = np.zeros((H, W))
+    for y in range(-2, 3):
+        for x in range(-2, 3):
+            v = pad[2 + y:2 + y + H, 2 + x:2 + x + W]
+            dg = v.mean(-1) - g0
+            w = np.exp(-(x * x + y * y) / 4.5 - dg * dg * inv)
+            acc += w[..., None] * v
+            wsum_ += w
+    return acc / wsum_[..., None]
+
+
+# Opponent transform of the quad channels R, Ge, Go, B: grey, R−G, B−G, Ge−Go. Noise is mostly in
+# the colour differences at high gain, and they can be smoothed much more than the grey level.
+T_OPP = np.array([[0.25, 0.25, 0.25, 0.25],
+                  [1.0, -0.5, -0.5, 0.0],
+                  [0.0, -0.5, -0.5, 1.0],
+                  [0.0, 1.0, -1.0, 0.0]])
+T_INV = np.linalg.inv(T_OPP)
+
+_B5 = np.array([1, 4, 6, 4, 1], np.float64) / 16.0
+
+
+def _blur5(x):
+    x = ndimage.convolve1d(x, _B5, axis=0, mode="nearest")
+    return ndimage.convolve1d(x, _B5, axis=1, mode="nearest")
+
+
+def _down(x):
+    return _blur5(x)[::2, ::2]
+
+
+def _up(x, shape):
+    """Bilinear upsampling to `shape` (centres aligned), as a GL texture fetch would do."""
+    zy, zx = shape[0] / x.shape[0], shape[1] / x.shape[1]
+    yy = (np.arange(shape[0]) + 0.5) / zy - 0.5
+    xx = (np.arange(shape[1]) + 0.5) / zx - 0.5
+    Y, X = np.meshgrid(yy, xx, indexing="ij")
+    if x.ndim == 2:
+        return ndimage.map_coordinates(x, [Y, X], order=1, mode="nearest")
+    return np.stack([ndimage.map_coordinates(x[..., c], [Y, X], order=1, mode="nearest") for c in range(x.shape[-1])], -1)
+
+
+_BAND_GAIN = {}
+
+
+def _band_gains(levels):
+    """Standard deviation of each Laplacian band for unit white noise (measured once)."""
+    if levels not in _BAND_GAIN:
+        rng = np.random.default_rng(3)
+        n = rng.normal(0, 1, (512, 512))
+        g, out = n, []
+        for _ in range(levels):
+            d = _down(g)
+            out.append((g - _up(d, g.shape)).std())
+            g = d
+        out.append(g.std())
+        _BAND_GAIN[levels] = out
+    return _BAND_GAIN[levels]
+
+
+def _opp(c):
+    gm = 0.5 * (c[..., 1] + c[..., 2])
+    return np.stack([c.mean(-1), c[..., 0] - gm, c[..., 3] - gm, c[..., 1] - c[..., 2]], -1)
+
+
+def _opp_inv(o):
+    gm = o[..., 0] - 0.25 * (o[..., 1] + o[..., 2])
+    return np.stack([o[..., 1] + gm, gm + 0.5 * o[..., 3], gm - 0.5 * o[..., 3], o[..., 2] + gm], -1)
+
+
+DN_T_LUMA, DN_T_CHROMA, DN_LEVELS_MS, DN_GRAIN = 1.2, 2.0, 4, 0.1   # as MultiFrameProcessor
+
+
+def denoise_ms(mq, wsum, noise, k, levels=DN_LEVELS_MS, t_luma=DN_T_LUMA, t_chroma=DN_T_CHROMA, grain=0.0,
+               fine_bilateral=False):
+    """
+    Multi-scale noise reduction, step by step as the DN_DOWN / DN_UP shaders: opponent transform
+    (grey, R−G, B−G, Ge−Go), Laplacian pyramid, and in every band a local Wiener gain
+    E / (E + t²σ²), E = 3×3 mean of the squared coefficients minus σ². σ² comes from the noise
+    model, the shading/white balance gains and the number of merged frames, evaluated on the next
+    coarser level (a smoothed brightness), so no variance pyramid is stored. Coarse bands carry the
+    blotchy low-frequency noise a 5×5 filter cannot reach. `grain` puts back that fraction of the
+    removed fine grey noise (Windows' "noise restoration"), so flat areas do not look waxy.
+    """
+    a, b = noise
+    gains = _band_gains(levels)
+    t2 = np.array([t_luma, t_chroma, t_chroma, t_chroma]) ** 2
+    T2 = T_OPP ** 2
+    g = [_opp(mq)]
+    for _ in range(levels):
+        g.append(_down(g[-1]))
+    H, W = mq.shape[:2]
+    out = g[-1]
+    for li in range(levels - 1, -1, -1):
+        gl = g[li]
+        h, w = gl.shape[:2]
+        coarse_up = _up(g[li + 1], (h, w))
+        band = gl - coarse_up
+        # noise of this level, from the smoothed brightness
+        uy = np.minimum(((np.arange(h) + 0.5) * H / h).astype(int), H - 1)
+        ux = np.minimum(((np.arange(w) + 0.5) * W / w).astype(int), W - 1)
+        kl = k[uy][:, ux]
+        wl = np.maximum(wsum[uy][:, ux], 1.0)
+        raw = np.clip(_opp_inv(coarse_up) / kl, 0, None)
+        var = kl * kl * (a * raw + b) / wl[..., None]
+        s2 = (var @ T2.T) * gains[li] ** 2
+        if li == 0 and fine_bilateral:
+            nb = band
+        else:
+            e = np.clip(ndimage.uniform_filter(band * band, (3, 3, 1), mode="nearest") - s2, 0, None)
+            nb = e / (e + t2 * s2 + 1e-20) * band
+            if li == 0 and grain > 0:
+                nb[..., 0] += grain * (band[..., 0] - nb[..., 0])
+        out = _up(out, (h, w)) + nb
+    res = _opp_inv(out)
+    if fine_bilateral:
+        res = denoise_app(res, wsum, noise, k)
+    return res
+
+
+def ssim(a, b, sigma=1.5):
+    """Mean structural similarity of two single-channel images in [0, 1]."""
+    c1, c2 = 0.01 ** 2, 0.03 ** 2
+    f = lambda x: ndimage.gaussian_filter(x, sigma)
+    ma, mb = f(a), f(b)
+    va, vb, cov = f(a * a) - ma * ma, f(b * b) - mb * mb, f(a * b) - ma * mb
+    return float(np.mean(((2 * ma * mb + c1) * (2 * cov + c2)) / ((ma * ma + mb * mb + c1) * (va + vb + c2))))
 
 # ---------------------------------------------------------------------------
 # Finishing (as PREP + FINISH + SHARPEN)
@@ -646,6 +794,74 @@ def cmd_bench(args):
     print("images in", d)
 
 
+DN_LEVELS = {"low": (2e-3, 2e-5), "mid": (8e-3, 1e-4), "high": (2.5e-2, 6e-4)}
+
+
+def dn_variants():
+    return [
+        ("none", lambda mq, w, n, k: mq),
+        ("old bilateral", lambda mq, w, n, k: denoise_app(mq, w, n, k)),
+        ("app (ms)", lambda mq, w, n, k: denoise_ms(mq, w, n, k, grain=DN_GRAIN)),
+        ("ms t0.7", lambda mq, w, n, k: denoise_ms(mq, w, n, k, t_luma=0.7)),
+        ("ms t1.0", lambda mq, w, n, k: denoise_ms(mq, w, n, k, t_luma=1.0)),
+        ("ms t1.4", lambda mq, w, n, k: denoise_ms(mq, w, n, k, t_luma=1.4)),
+        ("ms t1.0 c3", lambda mq, w, n, k: denoise_ms(mq, w, n, k, t_luma=1.0, t_chroma=3.0)),
+        ("ms t1.0 grain.15", lambda mq, w, n, k: denoise_ms(mq, w, n, k, t_luma=1.0, grain=0.15)),
+        ("ms coarse+bilat", lambda mq, w, n, k: denoise_ms(mq, w, n, k, t_luma=1.0, fine_bilateral=True)),
+    ]
+
+
+def cmd_dnbench(args):
+    """Synthetic bursts at several noise levels and burst lengths: spatial denoise variants against the truth."""
+    global HOT_CROSS
+    HOT_CROSS = True
+    rows = []
+    crops = {}
+    for lvl in args.levels.split(","):
+        for nf in [int(x) for x in args.frames.split(",")]:
+            d = os.path.join(args.dir, "%s_%d" % (lvl, nf))
+            synth_burst(d, frames=nf, size=args.size, iso_noise=DN_LEVELS[lvl])
+            meta, frames = load_burst(d)
+            truth = np.load(os.path.join(d, "truth.npy"))
+            tq = np.stack([truth[0::2, 0::2, 0], truth[0::2, 1::2, 1], truth[1::2, 0::2, 1], truth[1::2, 1::2, 2]], -1)
+            qs = [to_quad(f, meta) for f in frames]
+            pyrs = [pyramid(gray(q)) for q in qs]
+            offsets = [np.zeros((math.ceil(qs[0].shape[0] / 16), math.ceil(qs[0].shape[1] / 16), 2))]
+            for p in pyrs[1:]:
+                offsets.append(align(pyrs[0], p))
+            if nf > 1:
+                fitted = fit_noise(qs[0], warp(qs[1], offsets[1]))
+                noise = fitted if args.fitted_noise else DN_LEVELS[lvl]
+                mq, w = merge_robust(qs, offsets, noise)
+                print("     noise fit a=%.3g b=%.3g (true %.3g %.3g)" % (fitted + DN_LEVELS[lvl]))
+            else:
+                noise, mq, w = DN_LEVELS[lvl], qs[0], np.ones(qs[0].shape[:2])
+            k = np.ones_like(mq)
+            Q, m = tq.shape[0], 16
+            yy, xx = np.mgrid[0:Q, 0:Q] / Q
+            fine = (((xx - 0.3) ** 2 + (yy - 0.3) ** 2 < 0.06) | ((yy > 0.6) & (xx > 0.55)))
+            inner = np.zeros((Q, Q), bool)
+            inner[m:-m, m:-m] = True
+            for name, fn in dn_variants():
+                out = fn(mq, w, noise, k)
+                g_out, g_t = out.mean(-1), tq.mean(-1)
+                rows.append((lvl, nf, name, psnr(out[inner], tq[inner]), psnr(out[inner & ~fine], tq[inner & ~fine]),
+                             psnr(out[inner & fine], tq[inner & fine]), ssim(np.clip(g_out, 0, 1), g_t)))
+                if nf == min(int(x) for x in args.frames.split(",")):
+                    crops.setdefault(lvl, []).append((name, out))
+                print("%-4s %2d frames  %-17s PSNR %6.2f  texture %6.2f  fine detail %6.2f  SSIM grey %.4f" % rows[-1], flush=True)
+    # side by side crops (quad → simple RGB, sRGB) for the eye
+    for lvl, lst in crops.items():
+        tiles = []
+        for name, out in lst:
+            rgb = np.stack([out[..., 0], 0.5 * (out[..., 1] + out[..., 2]), out[..., 3]], -1)
+            c = srgb(np.clip(rgb[40:200, 40:200] * 1.6, 0, 1))
+            tiles.append(np.repeat(np.repeat(c, 2, 0), 2, 1))
+        Image.fromarray((np.concatenate(tiles, 1) * 255).astype(np.uint8)).save(os.path.join(args.dir, "crops_%s.png" % lvl))
+    print("variants left to right:", ", ".join(n for n, _ in dn_variants()))
+    print("crops in", args.dir)
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
@@ -677,6 +893,14 @@ def main():
     p.add_argument("--frames", type=int, default=8)
     p.add_argument("--crop", type=int, default=192, help="zoom test crop, raw pixels")
     p.set_defaults(func=cmd_bench)
+    p = sub.add_parser("dnbench")
+    p.add_argument("dir", help="where to write the synthetic bursts and the crops")
+    p.add_argument("--levels", default="low,mid,high", help="noise levels: " + ",".join(DN_LEVELS))
+    p.add_argument("--frames", default="1,3,8")
+    p.add_argument("--size", type=int, default=256)
+    p.add_argument("--fitted-noise", action="store_true",
+                   help="denoise with the noise fitted from the burst (as the app) instead of the true one")
+    p.set_defaults(func=cmd_dnbench)
     args = ap.parse_args()
     args.func(args)
 
