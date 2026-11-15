@@ -43,7 +43,7 @@ salvato solo con l'opzione DNG accesa. Revisione del 15/11 con altri punti apert
 fotogramma, timeout della raffica, fuoco non bloccato durante la raffica, memoria del lettore RAW,
 frange a scacchiera sui bordi molto contrastati, modello del rumore): da pianificare.
 
-Dopo la 0.5.0 (15/11, sera), dalla revisione: fotogrammi della raffica abbinati al proprio risultato
+Dopo la 0.5.0 (15/11, sera, nella release 0.5.1), dalla revisione: fotogrammi della raffica abbinati al proprio risultato
 per timestamp (corti riconosciuti dall'esposizione applicata, normali fuori piano oltre il 10 %
 esclusi), timeout della raffica e buffer RAW persi gestiti, `safetyJob` azzerato quando la
 richiesta fallisce, fuoco continuo bloccato con un trigger nella prima richiesta, camera dello scatto

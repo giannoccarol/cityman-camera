@@ -1,0 +1,5 @@
+0.5.1
+- The camera no longer dies after a night shot: opening the gallery, switching camera or changing mode now waits until the photo is saved (closing the camera during the long exposures left the phone with no camera until a reboot)
+- The interface stays smooth while a multi-frame photo is processed, and the shutter shows how far the photo is
+- Burst frames are matched with their own exposure, so a frame taken with the wrong settings is left out instead of being merged too bright or too dark
+- Autofocus is locked for the whole burst

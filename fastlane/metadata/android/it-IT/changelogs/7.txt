@@ -1,0 +1,5 @@
+0.5.1
+- La fotocamera non si blocca più dopo uno scatto notturno: galleria, cambio fotocamera e cambio modalità aspettano che la foto sia salvata (chiudere la fotocamera durante le esposizioni lunghe lasciava il telefono senza fotocamera fino al riavvio)
+- L'interfaccia resta fluida mentre la foto multi-frame viene elaborata, e il tasto di scatto mostra a che punto è
+- I fotogrammi della raffica vengono abbinati alla propria esposizione: un fotogramma con le impostazioni sbagliate viene escluso invece di finire nella foto troppo chiaro o troppo scuro
+- L'autofocus resta bloccato per tutta la raffica
