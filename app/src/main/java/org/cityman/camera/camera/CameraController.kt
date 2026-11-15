@@ -1700,12 +1700,22 @@ class CameraController(private val context: Context) {
         burst = job
         try {
             val awbAuto = controls.wbKelvin == null
+            // Continuous AF stays free during the burst and may start searching again half-way,
+            // leaving the last frames soft: lock it with a trigger in the first frame (immediate
+            // from a passive state). Already locked when the shot triggered AF itself.
+            val afLocked = afTriggeredForShot || afState == CaptureResult.CONTROL_AF_STATE_FOCUSED_LOCKED ||
+                afState == CaptureResult.CONTROL_AF_STATE_NOT_FOCUSED_LOCKED
+            var lockAf = false
             val requests = (0 until plan.frames + plan.shortFrames).map { i ->
                 val exposure = if (i < plan.frames) plan.exposureNs else plan.shortExposureNs
                 val b = dev.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
                 b.addTarget(raw.surface)
                 b.addTarget(preview)
                 applyControls(b, still = false)
+                if (i == 0 && !afLocked && b.get(CaptureRequest.CONTROL_AF_MODE) == CameraMetadata.CONTROL_AF_MODE_CONTINUOUS_PICTURE) {
+                    b.set(CaptureRequest.CONTROL_AF_TRIGGER, CameraMetadata.CONTROL_AF_TRIGGER_START)
+                    lockAf = true
+                }
                 b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_OFF)
                 b.set(CaptureRequest.SENSOR_SENSITIVITY, plan.iso)
                 b.set(CaptureRequest.SENSOR_EXPOSURE_TIME, exposure)
@@ -1736,6 +1746,8 @@ class CameraController(private val context: Context) {
                 safetyJob = job
                 requests + b.build()
             } else requests
+            // The lock is released when the sequence completes (burst callback).
+            if (lockAf) afTriggeredForShot = true
             s.captureBurst(all, burstCallback(job), camHandler)
             // A frame can vanish without any callback (HAL error, buffer dropped): after the
             // exposures plus a margin, finish with the frames that did arrive.
