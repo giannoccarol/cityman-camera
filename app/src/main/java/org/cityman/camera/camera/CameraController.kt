@@ -1491,9 +1491,11 @@ class CameraController(private val context: Context) {
     /** What goes into the EXIF of a multi-frame photo. */
     internal data class ShotInfo(val iso: Int, val exposureNs: Long, val frames: Int, val fNumber: Float?, val focalMm: Float?)
 
-    private class Burst(val total: Int, val setup: BurstSetup, val info: ShotInfo) {
+    private class Burst(val total: Int, val setup: BurstSetup, val info: ShotInfo, val plannedNormal: Double) {
         /** gpu thread */
         var received = 0
+        /** Capture results by sensor timestamp, to match each RAW frame with its own metadata. */
+        val results = java.util.concurrent.ConcurrentHashMap<Long, TotalCaptureResult>()
         @Volatile var failed = false
         /** Stopped on purpose (app paused, camera closed): no error message. */
         @Volatile var cancelled = false
@@ -1676,7 +1678,7 @@ class CameraController(private val context: Context) {
             fNumber = c.chars[CameraCharacteristics.LENS_INFO_AVAILABLE_APERTURES]?.firstOrNull(),
             focalMm = c.chars[CameraCharacteristics.LENS_INFO_AVAILABLE_FOCAL_LENGTHS]?.firstOrNull()?.takeIf { it > 0f },
         )
-        val job = Burst(plan.frames + plan.shortFrames, setup, info)
+        val job = Burst(plan.frames + plan.shortFrames, setup, info, plan.iso.toDouble() * plan.exposureNs)
         if (_state.value.saveBursts) {
             job.dumpDir = context.getExternalFilesDir("bursts")?.let { java.io.File(it, store.baseName("burst")) }?.also { it.mkdirs() }
         }
@@ -1751,6 +1753,7 @@ class CameraController(private val context: Context) {
 
         override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
             if (request.tag == SAFETY_TAG) return
+            result[CaptureResult.SENSOR_TIMESTAMP]?.let { job.results[it] = result }
             if (job.firstResult == null) {
                 job.firstResult = result
                 gpuHandler.post { maybeFinishBurst(job) }
@@ -1775,11 +1778,36 @@ class CameraController(private val context: Context) {
         }
     }
 
-    /** gpu thread */
+    /**
+     * gpu thread. The frame's own capture result (matched by sensor timestamp) tells what the
+     * HAL applied: a highlight frame is recognised by its shorter exposure and scaled by the real
+     * ratio, a normal frame off the plan by more than 10 % (exposure not applied yet, or applied
+     * late) is left out instead of being merged at the wrong brightness.
+     */
     private fun burstFrame(job: Burst, image: Image) {
         job.dumpDir?.let { dir -> runCatching { BurstDump.writeFrame(dir, job.received, image) }.onFailure { Log.w(TAG, "dump frame", it) } }
+        var use = true
+        var scale: Float? = null
+        if (!job.failed && !job.finished) {
+            val r = awaitResult(job, image.timestamp)
+            val iso = r?.get(CaptureResult.SENSOR_SENSITIVITY)
+            val exp = r?.get(CaptureResult.SENSOR_EXPOSURE_TIME)
+            if (iso != null && exp != null && iso > 0 && exp > 0) {
+                val ratio = (job.plannedNormal / (iso.toDouble() * exp)).toFloat()
+                when {
+                    ratio > 1.5f -> scale = ratio.coerceAtMost(16f)
+                    kotlin.math.abs(ratio - 1f) <= 0.1f -> scale = 1f
+                    else -> {
+                        use = false
+                        Log.w(TAG, "frame ${job.received} off plan: ISO $iso, ${exp / 1000} µs (ratio $ratio), left out")
+                    }
+                }
+            } else if (r == null) {
+                Log.w(TAG, "frame ${job.received}: no capture result, merged by position")
+            }
+        }
         try {
-            if (!job.failed && !job.finished && job.received < job.total) processor.addFrame(image)
+            if (use && !job.failed && !job.finished && job.received < job.total) processor.addFrame(image, scale)
         } catch (e: Throwable) {
             Log.e(TAG, "merge frame", e)
             job.failed = true
@@ -1788,6 +1816,17 @@ class CameraController(private val context: Context) {
         }
         job.received++
         maybeFinishBurst(job)
+    }
+
+    /** gpu thread: the capture result of the frame with this timestamp, waiting a little for it. */
+    private fun awaitResult(job: Burst, timestamp: Long): TotalCaptureResult? {
+        var waited = 0
+        while (true) {
+            job.results[timestamp]?.let { return it }
+            if (waited >= 500 || job.failed) return null
+            Thread.sleep(10)
+            waited += 10
+        }
     }
 
     /** gpu thread */

@@ -134,8 +134,13 @@ class MultiFrameProcessor {
         Log.i(TAG, "burst ${s.width}x${s.height} gain=${s.gain} rot=${s.rotation} iso=${s.iso}")
     }
 
-    /** Uploads and merges one RAW16 frame. The caller closes the image afterwards. */
-    fun addFrame(image: Image) {
+    /**
+     * Uploads and merges one RAW16 frame. The caller closes the image afterwards.
+     * [exposureScale]: planned normal exposure over this frame's applied exposure (1 for a normal
+     * frame, about [BurstSetup.shortScale] for a highlight frame), from the frame's own capture
+     * result; null when unknown, then the frame's position in the burst decides.
+     */
+    fun addFrame(image: Image, exposureScale: Float? = null) {
         val s = setup ?: return
         val t0 = SystemClock.elapsedRealtime()
         lapStart = t0
@@ -150,6 +155,18 @@ class MultiFrameProcessor {
         Gl.check("upload")
         lap("upload")
 
+        val short = exposureScale?.let { it > 1.5f } ?: (frames >= s.frames - s.shortFrames)
+        if (!refChosen && short) {
+            // A highlight frame before the reference was chosen (normal frames lost on the way):
+            // choose it now from what is held; with nothing held there is nothing to merge into.
+            if (held.isEmpty()) {
+                Log.w(TAG, "highlight frame with no normal frame before it: dropped")
+                frames++
+                laps.clear()
+                return
+            }
+            chooseReference(s)
+        }
         if (!refChosen) {
             // Hold the first frames and score their sharpness; merge once the reference is known.
             val q = Tex(r.width / 2, r.height / 2, GLES31.GL_RGBA16F)
@@ -160,14 +177,13 @@ class MultiFrameProcessor {
             if (held.size >= min(HOLD, s.frames - s.shortFrames).coerceAtLeast(1)) chooseReference(s)
         } else {
             val target = alt!!
-            val short = frames >= s.frames - s.shortFrames
-            pack(r, target, s, if (short) s.shortScale else 1f)
+            pack(r, target, s, if (short) (exposureScale ?: s.shortScale) else 1f)
             lap("pack")
             gray(target, altPyr)
             lap("pyramid")
             alignLevels()
             lap("align")
-            merge(short = frames >= s.frames - s.shortFrames, hdr = s.shortFrames > 0)
+            merge(short = short, hdr = s.shortFrames > 0)
             lap("merge")
         }
         frames++
