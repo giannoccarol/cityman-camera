@@ -7,6 +7,8 @@ import android.opengl.EGLDisplay
 import android.opengl.EGLExt
 import android.opengl.EGLSurface
 import android.opengl.GLES31
+import kotlin.math.max
+import kotlin.math.min
 
 /** Off-screen OpenGL ES 3.1 context for compute work, current on the thread that creates it. */
 class GlContext {
@@ -86,7 +88,7 @@ class Program(name: String, source: String) {
 
     init {
         val shader = GLES31.glCreateShader(GLES31.GL_COMPUTE_SHADER)
-        GLES31.glShaderSource(shader, source)
+        GLES31.glShaderSource(shader, sliceable(source))
         GLES31.glCompileShader(shader)
         val ok = IntArray(1)
         GLES31.glGetShaderiv(shader, GLES31.GL_COMPILE_STATUS, ok, 0)
@@ -110,9 +112,46 @@ class Program(name: String, source: String) {
     fun setI4(name: String, x: Int, y: Int, z: Int, w: Int) = GLES31.glUniform4i(loc(name), x, y, z, w)
     fun setMat3(name: String, rowMajor: FloatArray) = GLES31.glUniformMatrix3fv(loc(name), 1, true, rowMajor, 0)
 
-    /** Runs the program over [w]×[h] invocations (8×8 work groups) and waits for its writes. */
+    /**
+     * Runs the program over [w]×[h] invocations (8×8 work groups) and waits for its writes.
+     *
+     * A full-resolution pass is one long GPU job (hundreds of ms on the Adreno 430, which cannot
+     * preempt it), and the viewfinder and the UI cannot draw until it ends. Large passes are
+     * therefore sent as bands of rows, each flushed on its own, so the driver can schedule the
+     * other contexts in between.
+     */
     fun dispatch(w: Int, h: Int) {
-        GLES31.glDispatchCompute((w + 7) / 8, (h + 7) / 8, 1)
+        val gx = (w + 7) / 8
+        val gy = (h + 7) / 8
+        val base = loc(BASE)
+        if (base < 0 || gx.toLong() * gy <= BAND_GROUPS) {
+            GLES31.glDispatchCompute(gx, gy, 1)
+        } else {
+            val rows = max(1, BAND_GROUPS / gx)
+            var y = 0
+            var pending = 0L
+            while (y < gy) {
+                val n = min(rows, gy - y)
+                GLES31.glUniform2ui(base, 0, y * 8)
+                GLES31.glDispatchCompute(gx, n, 1)
+                // Flushing alone is not enough: the driver queues every band at once and the UI
+                // still waits behind all of them. Keep one band in flight, so the GPU runs the
+                // other contexts' work between two bands.
+                val fence = GLES31.glFenceSync(GLES31.GL_SYNC_GPU_COMMANDS_COMPLETE, 0)
+                if (pending != 0L) {
+                    GLES31.glClientWaitSync(pending, GLES31.GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_TIMEOUT_NS)
+                    GLES31.glDeleteSync(pending)
+                }
+                GLES31.glFlush()
+                pending = fence
+                y += n
+            }
+            if (pending != 0L) {
+                GLES31.glClientWaitSync(pending, GLES31.GL_SYNC_FLUSH_COMMANDS_BIT, FENCE_TIMEOUT_NS)
+                GLES31.glDeleteSync(pending)
+            }
+            GLES31.glUniform2ui(base, 0, 0)
+        }
         GLES31.glMemoryBarrier(
             GLES31.GL_SHADER_IMAGE_ACCESS_BARRIER_BIT or GLES31.GL_TEXTURE_FETCH_BARRIER_BIT or
                 GLES31.GL_SHADER_STORAGE_BARRIER_BIT or GLES31.GL_FRAMEBUFFER_BARRIER_BIT,
@@ -126,6 +165,26 @@ class Program(name: String, source: String) {
     }
 
     fun release() = GLES31.glDeleteProgram(id)
+
+    private companion object {
+        const val BASE = "uBaseGid"
+
+        /** Work groups per band: about 10-30 ms of GPU time for the heavier passes. */
+        const val BAND_GROUPS = 4096
+
+        const val FENCE_TIMEOUT_NS = 2_000_000_000L
+
+        /**
+         * Makes [dispatch] able to send the shader in bands: its global invocation id gets the
+         * band's first row added. Shaders sized by their own work groups are left as they are.
+         */
+        fun sliceable(source: String): String {
+            if (!source.contains("gl_GlobalInvocationID") || !source.contains("local_size_x = 8, local_size_y = 8")) return source
+            val body = source.replace("gl_GlobalInvocationID", "(gl_GlobalInvocationID + uvec3($BASE, 0u))")
+            val at = body.indexOf('\n', body.indexOf("layout(local_size_x")) + 1
+            return body.substring(0, at) + "uniform uvec2 $BASE;\n" + body.substring(at)
+        }
+    }
 }
 
 object Gl {
