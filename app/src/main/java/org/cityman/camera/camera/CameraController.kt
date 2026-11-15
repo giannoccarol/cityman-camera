@@ -1415,6 +1415,7 @@ class CameraController(private val context: Context) {
         } ?: return
         val job = burst
         if (job != null) {
+            job.arrived++
             gpuHandler.post { burstFrame(job, image) }
             return
         }
@@ -1508,6 +1509,10 @@ class CameraController(private val context: Context) {
         @Volatile var outcome = 0
         /** Developer option: folder where this burst's RAW frames and metadata are kept. */
         var dumpDir: java.io.File? = null
+        /** RAW frames handed over by the reader (io thread), for the timeout. */
+        @Volatile var arrived = 0
+        /** cam thread: gives up on frames that never came (see [fireBurst]). */
+        var timeout: Runnable? = null
     }
 
     /** Burst whose safety JPEG is still expected from the JPEG reader. */
@@ -1732,9 +1737,21 @@ class CameraController(private val context: Context) {
                 requests + b.build()
             } else requests
             s.captureBurst(all, burstCallback(job), camHandler)
+            // A frame can vanish without any callback (HAL error, buffer dropped): after the
+            // exposures plus a margin, finish with the frames that did arrive.
+            val exposureMs = (plan.frames * plan.exposureNs + plan.shortFrames * plan.shortExposureNs) / 1_000_000L
+            job.timeout = Runnable {
+                if (job.finished) return@Runnable
+                Log.w(TAG, "burst timeout: ${job.arrived} of ${job.expected} frames arrived, result ${job.firstResult != null}")
+                job.expected = min(job.expected, job.arrived)
+                if (job.firstResult == null) job.failed = true
+                if (safetyJob === job) safetyJob = null
+                gpuHandler.post { maybeFinishBurst(job) }
+            }.also { camHandler.postDelayed(it, exposureMs + BURST_TIMEOUT_MARGIN_MS) }
         } catch (e: Exception) {
             Log.e(TAG, "burst capture", e)
             report("Capture failed: ${e.message}")
+            if (safetyJob === job) safetyJob = null
             burst = null
             gpuHandler.post { processor.abort() }
             finishShot(force = true)
@@ -1762,12 +1779,27 @@ class CameraController(private val context: Context) {
 
         override fun onCaptureFailed(s: CameraCaptureSession, request: CaptureRequest, failure: CaptureFailure) {
             if (request.tag == SAFETY_TAG) {
-                safetyJob = null
+                if (safetyJob === job) safetyJob = null
                 return
             }
-            Log.w(TAG, "burst frame failed: reason ${failure.reason}")
-            job.expected--
-            gpuHandler.post { maybeFinishBurst(job) }
+            Log.w(TAG, "burst frame failed: reason ${failure.reason}, image captured ${failure.wasImageCaptured()}")
+            // A failed result can still come with its image: then the frame is not missing.
+            if (!failure.wasImageCaptured()) {
+                job.expected--
+                gpuHandler.post { maybeFinishBurst(job) }
+            }
+        }
+
+        override fun onCaptureBufferLost(s: CameraCaptureSession, request: CaptureRequest, target: Surface, frameNumber: Long) {
+            if (request.tag == SAFETY_TAG) {
+                if (safetyJob === job) safetyJob = null
+                return
+            }
+            if (target == rawReader?.surface) {
+                Log.w(TAG, "burst RAW buffer lost (frame $frameNumber)")
+                job.expected--
+                gpuHandler.post { maybeFinishBurst(job) }
+            }
         }
 
         override fun onCaptureSequenceCompleted(s: CameraCaptureSession, sequenceId: Int, frameNumber: Long) {
@@ -1835,7 +1867,8 @@ class CameraController(private val context: Context) {
         val result = job.firstResult
         if (!job.failed && (job.received < job.expected || result == null)) return
         job.finished = true
-        burst = null
+        job.timeout?.let { r -> camHandler.post { camHandler.removeCallbacks(r) } }
+        if (burst === job) burst = null
         if (job.failed || result == null || job.received == 0) {
             processor.abort()
             fallBackToSafety(job)
@@ -2166,6 +2199,8 @@ class CameraController(private val context: Context) {
         private const val MAX_BURST = BurstPlanner.MAX_FRAMES
         private const val MAX_RAPID = 30
         private const val SAFETY_TAG = "arco-safety-jpeg"
+        /** Margin after the burst exposures before missing frames are given up. */
+        private const val BURST_TIMEOUT_MARGIN_MS = 4000L
         private const val TRIPOD_RAD_S = 0.008
         private const val ACCEL_STILL_MS2 = 0.12f
 
