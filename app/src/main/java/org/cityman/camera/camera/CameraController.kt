@@ -1278,7 +1278,8 @@ class CameraController(private val context: Context) {
         }
         // Rapid fire takes standard photos (no multi-frame, no DNG), focusing only before the first.
         val mf = _state.value.multiFrame && c.multiFrameReady && rawReader != null && !rapid
-        shot = Shot(jpegOrientation(c), rawReader != null && !mf && !rapid, SystemClock.elapsedRealtime(), mf)
+        // The RAW reader also exists for multi-frame: a DNG only when the user asked for one.
+        shot = Shot(jpegOrientation(c), rawReader != null && !mf && !rapid && _state.value.saveDng, SystemClock.elapsedRealtime(), mf)
         _state.update { it.copy(capturing = true) }
         analyzer?.paused = true
         val needAf = !(rapid && _state.value.rapidCount > 0) && c.hasAutoFocus && controls.focusDiopters == null && focusRegion == null &&
@@ -1311,7 +1312,7 @@ class CameraController(private val context: Context) {
         try {
             val b = dev.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
             b.addTarget(jpeg.surface)
-            rawReader?.let { b.addTarget(it.surface) }
+            if (shot?.rawExpected == true) rawReader?.let { b.addTarget(it.surface) }
             b.addTarget(preview)
             applyControls(b, still = true)
             s.capture(b.build(), stillCallback, camHandler)
@@ -1418,11 +1419,14 @@ class CameraController(private val context: Context) {
             return
         }
         val current = shot
-        if (current == null) {
+        if (current == null || !current.rawExpected) {
             image.close()
             return
         }
-        synchronized(current) { current.raw = image }
+        synchronized(current) {
+            current.raw?.close()
+            current.raw = image
+        }
         writeDngIfReady(current)
     }
 
