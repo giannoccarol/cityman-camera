@@ -72,6 +72,8 @@ data class CameraState(
     val mfFrames: Int = 0,
     val mfOptions: ProcessingOptions = ProcessingOptions(),
     val processing: Boolean = false,
+    /** How far a multi-frame photo is, 0..1 (frames merged, then the final pass); -1 when none. */
+    val progress: Float = -1f,
     /** The phone is resting: multi-frame photos use the long night exposures. */
     val still: Boolean = false,
     val showHistogram: Boolean = false,
@@ -1482,7 +1484,7 @@ class CameraController(private val context: Context) {
         analyzer?.paused = false
         waitingAf = false
         camHandler.removeCallbacks(afTimeout)
-        _state.update { it.copy(capturing = false, processing = false) }
+        _state.update { it.copy(capturing = false, processing = false, progress = -1f) }
         // Rapid fire: next photo as soon as this one is saved, up to 30.
         if (rapid && !force && !current.burst) {
             val n = _state.value.rapidCount + 1
@@ -1782,7 +1784,7 @@ class CameraController(private val context: Context) {
             if (started) return
             started = true
             if (_state.value.shutterSound) sound.play(MediaActionSound.SHUTTER_CLICK)
-            _state.update { it.copy(shutterCount = it.shutterCount + 1, processing = true) }
+            _state.update { it.copy(shutterCount = it.shutterCount + 1, processing = true, progress = 0f) }
         }
 
         override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
@@ -1864,6 +1866,10 @@ class CameraController(private val context: Context) {
             image.close()
         }
         job.received++
+        if (!job.finished) {
+            val p = 0.85f * job.received / max(1, job.expected)
+            _state.update { it.copy(progress = p.coerceAtMost(0.85f)) }
+        }
         maybeFinishBurst(job)
     }
 
@@ -1910,6 +1916,7 @@ class CameraController(private val context: Context) {
                     )
                 }.onFailure { Log.w(TAG, "dump meta", it) }
             }
+            _state.update { it.copy(progress = 0.9f) }
             processor.finish(gains, ccm, result[CaptureResult.STATISTICS_LENS_SHADING_CORRECTION_MAP])
         } catch (e: Throwable) {
             Log.e(TAG, "finish burst", e)

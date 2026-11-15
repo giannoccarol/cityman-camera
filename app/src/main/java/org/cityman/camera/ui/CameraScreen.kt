@@ -2,6 +2,7 @@ package org.cityman.camera.ui
 
 import android.net.Uri
 import android.view.SurfaceView
+import kotlin.math.max
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
@@ -32,7 +33,11 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.LinearEasing
+import androidx.compose.animation.core.LinearOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.snap
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
 import androidx.compose.animation.core.rememberInfiniteTransition
@@ -614,6 +619,7 @@ private fun ShutterBar(
             recording = state.recording,
             busy = state.capturing && state.rapidCount == 0,
             processing = state.processing,
+            progress = state.progress,
             onClick = onShutter,
             onHoldStart = onHoldStart,
             onHoldEnd = onHoldEnd,
@@ -649,6 +655,7 @@ private fun ShutterButton(
     recording: Boolean,
     busy: Boolean,
     processing: Boolean,
+    progress: Float,
     onClick: () -> Unit,
     onHoldStart: () -> Unit,
     onHoldEnd: () -> Unit,
@@ -658,8 +665,19 @@ private fun ShutterButton(
     val holdEnd by rememberUpdatedState(onHoldEnd)
     val click by rememberUpdatedState(onClick)
     val canHold = mode == CaptureMode.PHOTO
+    // While a multi-frame photo is merged the GPU is busy and the UI can miss frames. A fast
+    // spinner shows every missed frame as a jump; a ring that fills with the real progress and
+    // a slow breathing of the centre hide them: they only move a little, and in one direction.
     val spin = rememberInfiniteTransition(label = "processing")
-    val angle by spin.animateFloat(0f, 360f, infiniteRepeatable(tween(900, easing = LinearEasing)), label = "spin")
+    val angle by spin.animateFloat(0f, 360f, infiniteRepeatable(tween(2400, easing = LinearEasing)), label = "spin")
+    val breath by spin.animateFloat(
+        0.3f, 0.6f, infiniteRepeatable(tween(1300, easing = FastOutSlowInEasing), RepeatMode.Reverse), label = "breath",
+    )
+    val shown by animateFloatAsState(
+        if (processing) progress.coerceAtLeast(0f) else 0f,
+        if (processing) tween(450, easing = LinearOutSlowInEasing) else snap(),
+        label = "progress",
+    )
     val interaction = remember { MutableInteractionSource() }
     var holding by remember { mutableStateOf(false) }
     val pressed by interaction.collectIsPressedAsState()
@@ -707,11 +725,16 @@ private fun ShutterButton(
         drawCircle(Color.White, radius = r - 2.dp.toPx(), style = Stroke(4.dp.toPx()))
         if (processing) {
             val inset = 2.dp.toPx()
-            drawArc(
-                Accent, startAngle = angle, sweepAngle = 100f, useCenter = false,
-                topLeft = Offset(inset, inset), size = androidx.compose.ui.geometry.Size(size.width - 2 * inset, size.height - 2 * inset),
-                style = Stroke(4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round),
-            )
+            val box = androidx.compose.ui.geometry.Size(size.width - 2 * inset, size.height - 2 * inset)
+            val stroke = Stroke(4.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round)
+            if (progress >= 0f) {
+                drawArc(
+                    Accent, startAngle = -90f, sweepAngle = max(6f, 360f * shown), useCenter = false,
+                    topLeft = Offset(inset, inset), size = box, style = stroke,
+                )
+            } else {
+                drawArc(Accent, startAngle = angle, sweepAngle = 100f, useCenter = false, topLeft = Offset(inset, inset), size = box, style = stroke)
+            }
         }
         when {
             recording -> {
@@ -723,7 +746,10 @@ private fun ShutterButton(
                 )
             }
             mode == CaptureMode.VIDEO -> drawCircle(RecordRed, radius = r - 10.dp.toPx())
-            else -> drawCircle(if (busy) Color.White.copy(alpha = 0.4f) else Color.White, radius = r - 10.dp.toPx())
+            else -> drawCircle(
+                Color.White.copy(alpha = if (processing) breath else if (busy) 0.4f else 1f),
+                radius = r - 10.dp.toPx(),
+            )
         }
     }
 }
