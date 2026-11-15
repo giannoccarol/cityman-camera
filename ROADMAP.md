@@ -43,6 +43,21 @@ salvato solo con l'opzione DNG accesa. Revisione del 15/11 con altri punti apert
 fotogramma, timeout della raffica, fuoco non bloccato durante la raffica, memoria del lettore RAW,
 frange a scacchiera sui bordi molto contrastati, modello del rumore): da pianificare.
 
+Dopo la 0.5.0 (15/11, sera), dalla revisione: fotogrammi della raffica abbinati al proprio risultato
+per timestamp (corti riconosciuti dall'esposizione applicata, normali fuori piano oltre il 10 %
+esclusi), timeout della raffica e buffer RAW persi gestiti, `safetyJob` azzerato quando la
+richiesta fallisce, fuoco continuo bloccato con un trigger nella prima richiesta, camera dello scatto
+tenuta per il DNG, nomi dei file con un formattatore thread-safe. Provato sul 950 XL con una copia
+a parte: raffiche complete, nessun fotogramma senza risultato o fuori piano; non provocati buffer
+persi né il blocco del fuoco a metà raffica (effetto non misurato).
+
+Lasciato fuori (branch locale `wip/raw-buffers-close`): rilascio dei buffer RAW a fine raffica e
+chiusura della sessione senza attendere la GPU. Durante la prova, uscendo dall'app a metà raffica,
+l'HAL ha rifiutato le richieste (`-38`), cameraserver ha chiuso il provider e la fotocamera è
+sparita fino al riavvio. Non verificato se succede anche con la 0.5.0: da riprovare con le due
+versioni prima di riprendere quel commit. Il guadagno di memoria non è misurabile con
+`MemAvailable` (oscilla di centinaia di MB).
+
 ### Android 11 e 12 (9/11, release 0.4.0)
 
 `minSdk` da 33 a 30: Arco si installa su Android 11 (950 XL con LineageOS 18.1, Lumia 1520 e 930).
