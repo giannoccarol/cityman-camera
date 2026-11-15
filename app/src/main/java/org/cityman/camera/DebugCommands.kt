@@ -10,7 +10,7 @@ import org.cityman.camera.camera.ManualControls
  * in the foreground, e.g.
  * `adb shell am broadcast -a org.cityman.camera.DEBUG --ez dng true --ei iso 200 --ez shoot true`.
  * Extras: tools (string with h/z/p: histogram, zebra, peaking), dng (bool), bursts (bool, save RAW
- * bursts for the burst lab), mf (bool), frames (int, 0 = auto), iso (int, 0 = auto), shutter_us (long, 0 = auto), wb (int K, 0 = auto),
+ * bursts for the burst lab), denoise / chroma / sharpen (bool, multi-frame finishing steps), mf (bool), frames (int, 0 = auto), iso (int, 0 = auto), shutter_us (long, 0 = auto), wb (int K, 0 = auto),
  * focus (float diopters, -1 = auto), ev (int steps), reset (bool), mode (photo|video), switch (bool,
  * next camera), shoot (bool; in video mode it starts or stops recording).
  */
@@ -22,6 +22,16 @@ object DebugCommands {
         val st = controller.state.value
         if (extras.containsKey("dng")) controller.setSaveDng(extras.getBoolean("dng"))
         if (extras.containsKey("bursts")) controller.setSaveBursts(extras.getBoolean("bursts"))
+        if (extras.containsKey("denoise") || extras.containsKey("chroma") || extras.containsKey("sharpen")) {
+            val o = st.mfOptions
+            controller.setMultiFrameOptions(
+                o.copy(
+                    denoise = extras.getBoolean("denoise", o.denoise),
+                    chromaDenoise = extras.getBoolean("chroma", o.chromaDenoise),
+                    sharpen = extras.getBoolean("sharpen", o.sharpen),
+                ),
+            )
+        }
         if (extras.containsKey("mf")) controller.setMultiFrame(extras.getBoolean("mf"))
         if (extras.containsKey("frames")) controller.setMultiFrameFrames(extras.getInt("frames"))
         when (extras.getString("mode")) {
