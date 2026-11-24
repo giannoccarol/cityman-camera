@@ -90,6 +90,8 @@ data class CameraState(
     /** Video: time-lapse factor (0 = off) and electronic stabilisation. */
     val timelapse: Int = 0,
     val stabilise: Boolean = false,
+    /** Video resolution and frame rate chosen by the user; each camera records the nearest it offers. */
+    val videoQuality: VideoQuality = VideoQuality.DEFAULT,
     /**
      * Camera → encoder without the GL copy: -1 not tried yet, 1 works, 0 failed on this ROM
      * (then videos use the YUV → GL path).
@@ -168,6 +170,7 @@ class CameraController(private val context: Context) {
             keepStandard = prefs.getBoolean("mfKeepStd", false),
             saveLocation = prefs.getBoolean("location", false),
             timelapse = prefs.getInt("timelapse", 0),
+            videoQuality = VideoQuality.fromName(prefs.getString("videoQuality", null)),
             stabilise = prefs.getBoolean("stabilise", false),
             directVideo = prefs.getInt("directVideo", -1),
             level = prefs.getBoolean("level", false),
@@ -553,6 +556,17 @@ class CameraController(private val context: Context) {
         if (before != wantsDirectVideo() && _state.value.mode == CaptureMode.VIDEO && recorder == null) reconfigure()
     }
 
+    /** Not while recording; rebuilds the video session with the new size and frame rate. */
+    fun setVideoQuality(q: VideoQuality) = camHandler.post {
+        if (_state.value.videoQuality == q || recorder != null) return@post
+        prefs.edit().putString("videoQuality", q.name).apply()
+        _state.update { it.copy(videoQuality = q) }
+        if (_state.value.mode == CaptureMode.VIDEO) reconfigure()
+    }
+
+    /** Size, frame rate and bit rate this camera records for the chosen quality. */
+    private fun videoConfig(c: CameraCaps): VideoConfig = c.videoConfig(_state.value.videoQuality)
+
     fun setStabilise(on: Boolean) = camHandler.post {
         val before = wantsDirectVideo()
         prefs.edit().putBoolean("stabilise", on).apply()
@@ -584,6 +598,8 @@ class CameraController(private val context: Context) {
 
     /** Persistent encoder input surface for the direct path, sized by a throwaway recorder. */
     private var directSurface: Surface? = null
+    /** LEGACY video sessions: a JPEG stream that only sets the shape, see [CameraCaps.jpegSizeLike]. */
+    private var videoJpegSink: ImageReader? = null
     private var directSurfaceSize: Size? = null
     private var directInUse = false
 
@@ -846,6 +862,8 @@ class CameraController(private val context: Context) {
         previewSurface = null
         jpegReader?.let { retiredReaders += it }
         jpegReader = null
+        videoJpegSink?.let { retiredReaders += it }
+        videoJpegSink = null
         // A burst frame may be on the GPU right now: stop the burst and let the GPU thread
         // finish that frame before the reader (and the frame's buffer) goes away.
         burst?.let { job ->
@@ -896,7 +914,7 @@ class CameraController(private val context: Context) {
         configGen++
         val gen = configGen
         val st = _state.value
-        val preview = if (st.mode == CaptureMode.VIDEO) c.previewSize(c.videoSize()) else c.previewSize(c.jpegSize(st.format))
+        val preview = if (st.mode == CaptureMode.VIDEO) c.previewSize(videoConfig(c).size) else c.previewSize(c.jpegSize(st.format))
         _state.update { it.copy(previewSize = preview) }
         mainHandler.post {
             wantedSize = preview
@@ -960,7 +978,18 @@ class CameraController(private val context: Context) {
             _analysis.value = null
         }
         if (st.mode == CaptureMode.VIDEO) {
-            val size = c.videoSize()
+            val vc = videoConfig(c)
+            val size = vc.size
+            Log.i(TAG, "video ${vc.quality?.label ?: "${size.width}x${size.height}"} (${size.width}x${size.height} at ${vc.fps} fps, AE ${vc.range}), offered: ${c.videoQualities.joinToString { it.label }}")
+            if (c.legacy) {
+                // Never captured: it only gives Android's HAL1 layer the video's shape (see jpegSizeLike).
+                c.jpegSizeLike(size)?.let { js ->
+                    videoJpegSink = ImageReader.newInstance(js.width, js.height, ImageFormat.JPEG, 1).also {
+                        it.setOnImageAvailableListener({ r -> runCatching { r.acquireLatestImage()?.close() } }, ioHandler)
+                        outputs += OutputConfiguration(it.surface)
+                    }
+                }
+            }
             val direct = if (wantsDirectVideo()) ensureDirectSurface(size) else null
             directInUse = direct != null
             if (direct != null) {
@@ -1050,6 +1079,11 @@ class CameraController(private val context: Context) {
         val recording = recorder != null
         val b = dev.createCaptureRequest(if (recording) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW)
         b.addTarget(surface)
+        if (_state.value.mode == CaptureMode.VIDEO && caps?.legacy == true) {
+            // HAL1 recording hint from the start: the same sensor mode in the viewfinder and in
+            // the recording, no preview restart when recording starts.
+            b.set(CaptureRequest.CONTROL_CAPTURE_INTENT, CameraMetadata.CONTROL_CAPTURE_INTENT_VIDEO_RECORD)
+        }
         if (recording) {
             if (directInUse) directSurface?.let { b.addTarget(it) } else video?.let { b.addTarget(it.reader.surface) }
         }
@@ -1132,7 +1166,7 @@ class CameraController(private val context: Context) {
         if ((m.iso == null && m.exposureNs == null) || !c.manualSensor) {
             b.set(CaptureRequest.CONTROL_AE_MODE, CameraMetadata.CONTROL_AE_MODE_ON)
             b.set(CaptureRequest.CONTROL_AE_EXPOSURE_COMPENSATION, m.evSteps.coerceIn(c.evRange.lower, c.evRange.upper))
-            c.fpsRange(video)?.let { b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
+            (if (video) videoConfig(c).range else c.fpsRange(false))?.let { b.set(CaptureRequest.CONTROL_AE_TARGET_FPS_RANGE, it) }
             if (_state.value.aeLock) b.set(CaptureRequest.CONTROL_AE_LOCK, true)
             meterRegion?.let { b.set(CaptureRequest.CONTROL_AE_REGIONS, arrayOf(it)) }
         } else {
@@ -2027,14 +2061,15 @@ class CameraController(private val context: Context) {
         val vp = video
         if (direct == null && vp == null) return
         if (session == null || recorder != null) return
-        val size = if (direct != null) directSurfaceSize ?: c.videoSize() else vp!!.size
+        val vc = videoConfig(c)
+        val size = if (direct != null) directSurfaceSize ?: vc.size else vp!!.size
         val audio = context.checkSelfPermission(Manifest.permission.RECORD_AUDIO) == PackageManager.PERMISSION_GRANTED
         val uri = store.createVideo(store.baseName("VID") + ".mp4") ?: run {
             report("Could not create the video file")
             return
         }
         val fd = store.openFd(uri)
-        val fps = c.fpsRange(video = true)?.upper ?: 30
+        val fps = vc.fps
         val r = newMediaRecorder()
         try {
             val lapse = _state.value.timelapse
@@ -2044,7 +2079,7 @@ class CameraController(private val context: Context) {
             r.setOutputFormat(MediaRecorder.OutputFormat.MPEG_4)
             r.setOutputFile(fd.fileDescriptor)
             r.setVideoEncoder(MediaRecorder.VideoEncoder.H264)
-            r.setVideoEncodingBitRate(if (size.width >= 1920) 20_000_000 else 10_000_000)
+            r.setVideoEncodingBitRate(vc.bitrate)
             r.setVideoFrameRate(if (lapse > 1) 30 else fps)
             r.setVideoSize(size.width, size.height)
             if (withAudio) {
@@ -2060,7 +2095,8 @@ class CameraController(private val context: Context) {
             if (direct == null) vp!!.attach(
                 r.surface,
                 VideoPipeline.Options(
-                    every = _state.value.timelapse.coerceAtLeast(1),
+                    // Time-lapse factor against 30 fps output: twice the frames to skip at 60 fps.
+                    every = if (lapse > 1) lapse * fps / 30 else 1,
                     stabilise = _state.value.stabilise,
                     sensorOrientation = c.sensorOrientation,
                     front = c.front,

@@ -117,6 +117,58 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
             ?: videoSizes.first()
     }
 
+    val legacy: Boolean get() = hardwareLevel == CameraMetadata.INFO_SUPPORTED_HARDWARE_LEVEL_LEGACY
+
+    private fun listed(list: List<Size>, w: Int, h: Int) = list.any { it.width == w && it.height == h }
+
+    /**
+     * AE range for video at [fps]: the usual one at 30 fps; above that a fixed range, or one that
+     * ends there. Only listed ranges: Android's LEGACY layer drops any other (HAL1
+     * `preview-fps-range-values`), and HAL3 may refuse it.
+     */
+    private fun videoRange(fps: Int): Range<Int>? =
+        if (fps <= 30) fpsRange(video = true)
+        else fpsRanges.firstOrNull { it.lower == fps && it.upper == fps }
+            ?: fpsRanges.filter { it.upper == fps }.maxByOrNull { it.lower }
+
+    private fun frameDurationOk(q: VideoQuality): Boolean {
+        val d = runCatching { map.getOutputMinFrameDuration(MediaRecorder::class.java, Size(q.width, q.height)) }.getOrDefault(0L)
+        return d <= 0L || d <= 1_000_000_000L / q.fps * 21 / 20
+    }
+
+    /**
+     * Video qualities this camera can record: the size is offered for the recorder and for the
+     * YUV path, the frame rate is in the AE ranges and fits the stream's minimum frame duration,
+     * and an H.264 encoder takes it. 720p30 and 1080p30 skip the encoder check, as before.
+     */
+    val videoQualities: List<VideoQuality> by lazy {
+        VideoQuality.entries.filter { q ->
+            listed(videoSizes, q.width, q.height) &&
+                (listed(yuvSizes, q.width, q.height) || listed(previewSizes, q.width, q.height)) &&
+                (q.fps <= 30 || videoRange(q.fps) != null) &&
+                frameDurationOk(q) &&
+                (q == VideoQuality.HD30 || q == VideoQuality.FHD30 || VideoEncoders.supports(q.width, q.height, q.fps))
+        }
+    }
+
+    /** What to record for the user's [wanted] quality on this camera. */
+    fun videoConfig(wanted: VideoQuality): VideoConfig {
+        val q = VideoQuality.pick(videoQualities, wanted)
+            ?: return videoSize().let { VideoConfig(it, 30, if (it.width >= 1920) 20_000_000 else 10_000_000, fpsRange(video = true), null) }
+        return VideoConfig(Size(q.width, q.height), q.fps, q.bitrate, videoRange(q.fps), q)
+    }
+
+    /**
+     * LEGACY cameras (HAL1 through Android's compatibility layer): that layer picks the HAL's
+     * preview size from the shape of the session's JPEG stream, the full 4:3 photo when there is
+     * none, so a 16:9 video ran on the largest preview mode (4096x2160 on the Lumia 930, 25 fps).
+     * The smallest JPEG with the video's shape makes it pick the matching 16:9 mode instead.
+     */
+    fun jpegSizeLike(video: Size): Size? {
+        val r = video.width.toFloat() / video.height
+        return jpegSizes.filter { abs(it.width.toFloat() / it.height - r) < 0.04f }.minByOrNull { it.area() }
+    }
+
     /** Widest frame-rate range for photos (longer exposures in low light), fixed and fastest for video. */
     fun fpsRange(video: Boolean): Range<Int>? {
         if (fpsRanges.isEmpty()) return null
@@ -135,6 +187,9 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
         fun Size.ratioNear(r: Float) = abs(width.toFloat() / height - r) < 0.02f
     }
 }
+
+/** Video stream and recorder settings for one recording; [quality] is null on cameras that offer none of the listed sizes. */
+class VideoConfig(val size: Size, val fps: Int, val bitrate: Int, val range: Range<Int>?, val quality: VideoQuality?)
 
 /**
  * Manual overrides; null means automatic. Exposure compensation is in Camera2 steps and only

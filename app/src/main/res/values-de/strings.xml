@@ -73,6 +73,8 @@
     <string name="settings_stabilise">Stabilisierung</string>
     <string name="settings_stabilise_desc">Experimentell: stabilisiert das Video mit dem Gyroskop und schneidet 10 % des Bildes ab.</string>
     <string name="video_info">H.264 mit AAC-Ton: 1080p mit 20 Mbit/s bei der Rückkamera, 720p bei der Frontkamera. Das AE-Abzeichen sperrt Belichtung und Weißabgleich.</string>
+    <string name="settings_video_quality">Videoqualität</string>
+    <string name="settings_video_quality_desc">Auflösung und Bildrate, die diese Kamera aufnehmen kann. 60 fps und 4K erscheinen nur, wenn Kamera und Encoder sie anbieten.</string>
     <string name="settings_direct_video">Direkte Kodierung</string>
     <string name="settings_direct_video_desc">Die Kamera schreibt direkt in den Video-Encoder: flüssiger und sparsamer. Lehnt dieses ROM das ab, wechselt Arco selbst in den kompatiblen Modus. Nicht mit Zeitraffer oder Stabilisierung.</string>
     <string name="settings_direct_video_ok">Funktioniert mit diesem ROM: Die Kamera schreibt direkt in den Video-Encoder.</string>

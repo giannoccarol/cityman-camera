@@ -73,6 +73,8 @@
     <string name="settings_stabilise">Stabilisation</string>
     <string name="settings_stabilise_desc">Expérimental : stabilise la vidéo avec le gyroscope, en recadrant 10 % de l\'image.</string>
     <string name="video_info">H.264 avec son AAC : 1080p à 20 Mbit/s avec la caméra arrière, 720p avec l\'avant. Le badge AE verrouille l\'exposition et la balance des blancs.</string>
+    <string name="settings_video_quality">Qualité vidéo</string>
+    <string name="settings_video_quality_desc">Définition et images par seconde que cette caméra peut enregistrer. 60 i/s et la 4K n\'apparaissent que si la caméra et l\'encodeur les proposent.</string>
     <string name="settings_direct_video">Encodage direct</string>
     <string name="settings_direct_video_desc">L\'appareil écrit directement dans l\'encodeur vidéo : plus fluide et plus léger. Si cette ROM le refuse, il revient seul au mode compatible. Pas utilisé avec le time-lapse ni la stabilisation.</string>
     <string name="settings_direct_video_ok">Fonctionne sur cette ROM : l\'appareil écrit directement dans l\'encodeur vidéo.</string>

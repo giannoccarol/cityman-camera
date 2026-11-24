@@ -3,6 +3,7 @@ package org.cityman.camera
 import android.content.Intent
 import org.cityman.camera.camera.CameraController
 import org.cityman.camera.camera.CaptureMode
+import org.cityman.camera.camera.VideoQuality
 import org.cityman.camera.camera.ManualControls
 
 /**
@@ -34,6 +35,7 @@ object DebugCommands {
         }
         if (extras.containsKey("mf")) controller.setMultiFrame(extras.getBoolean("mf"))
         if (extras.containsKey("frames")) controller.setMultiFrameFrames(extras.getInt("frames"))
+        extras.getString("vq")?.let { name -> VideoQuality.entries.firstOrNull { it.name == name }?.let { controller.setVideoQuality(it) } }
         when (extras.getString("mode")) {
             "photo" -> controller.setMode(CaptureMode.PHOTO)
             "video" -> controller.setMode(CaptureMode.VIDEO)

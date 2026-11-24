@@ -6,6 +6,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -43,6 +44,7 @@ import org.cityman.camera.R
 import org.cityman.camera.camera.CameraController
 import org.cityman.camera.camera.DeviceSupport
 import org.cityman.camera.camera.MultiFrameBlocker
+import org.cityman.camera.camera.VideoQuality
 import org.cityman.camera.camera.CameraState
 import org.cityman.camera.camera.PhotoFormat
 import java.util.Locale
@@ -170,6 +172,18 @@ private fun PhotoPage(controller: CameraController, state: CameraState) {
 @Composable
 private fun VideoPage(controller: CameraController, state: CameraState) {
     BasicText(stringResource(R.string.video_info), style = DescStyle)
+    val qualities = state.caps?.videoQualities.orEmpty()
+    if (qualities.isNotEmpty()) {
+        Choice(
+            title = stringResource(R.string.settings_video_quality),
+            desc = stringResource(R.string.settings_video_quality_desc),
+            options = qualities.map { it to it.label },
+            selected = VideoQuality.pick(qualities, state.videoQuality),
+            enabled = !state.recording,
+            wrap = true,
+            onSelect = { controller.setVideoQuality(it) },
+        )
+    }
     Choice(
         title = stringResource(R.string.settings_timelapse),
         desc = stringResource(R.string.settings_timelapse_desc),
@@ -351,6 +365,8 @@ internal fun <T> Choice(
     selected: T?,
     enabled: Boolean = true,
     horizontal: Boolean = false,
+    /** Horizontal, wrapping to more rows when the options do not fit. */
+    wrap: Boolean = false,
     titleStyle: TextStyle = TitleStyle,
     onSelect: (T) -> Unit,
 ) {
@@ -368,10 +384,12 @@ internal fun <T> Choice(
                 modifier = Modifier
                     .clickable(enabled = enabled) { onSelect(value) }
                     .padding(vertical = 6.dp, horizontal = if (horizontal) 0.dp else 0.dp)
-                    .padding(end = if (horizontal) 22.dp else 0.dp),
+                    .padding(end = if (horizontal || wrap) 22.dp else 0.dp),
             )
         }
-        if (horizontal) {
+        if (wrap) {
+            FlowRow { options.forEach { item(it) } }
+        } else if (horizontal) {
             Row { options.forEach { item(it) } }
         } else {
             Column(Modifier.padding(start = 2.dp)) { options.forEach { item(it) } }

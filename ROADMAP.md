@@ -90,6 +90,17 @@ sull'emulatore API 30 (GLES 3.0); il video YUV → GL non registra sull'emulator
 Da provare: 950 XL con 18.1 (livello HAL, RAW, multi-frame sull'Adreno 430 come su A16, video diretto),
 Lumia 1520/930 quando ci sarà un HAL camera.
 
+### Qualità video (24/11, branch `video-quality`, non in una release)
+
+Selettore 720p30/60, 1080p30/60, 4K30 chiesto dall'utente per 930 e 1520 (Android 11, camera
+LEGACY). Ogni voce compare solo se la camera ha la dimensione, il range di fps e il codificatore
+la regge. Sui LEGACY (HAL1 attraverso lo strato di compatibilità di Android) il 60 fps compare solo
+quando l'HAL elenca `60000,60000` in `preview-fps-range-values`: lo strato scarta ogni altro range.
+Per i LEGACY la sessione video ha anche un JPEG 16:9 mai scattato: senza, lo strato sceglieva
+l'anteprima HAL più grande (4096x2160 sul 930, circa 25 fps anche a 1080p). Provato solo
+sull'emulatore API 30 (HAL3, 720p/1080p a 30). Da provare sul 930: fps reali a 1080p30, 4K30, e
+60 fps dopo la modifica dell'HAL.
+
 ### Da provare sul telefono (prossima occasione)
 
 1. **Video diretto**: registrare 10 s con la posteriore; nel log `direct video path works` o il

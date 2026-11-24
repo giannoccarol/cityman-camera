@@ -20,7 +20,15 @@ AndroidX libraries in use require). It also runs on older phones and ROMs: see
 - Photo: JPEG (quality 95, high-quality noise reduction and sharpening) and, from the settings,
   an extra DNG with the full 5344×3744 RAW frame (Android `DngCreator`). Files go to
   `DCIM/Camera` as `IMG_yyyyMMdd_HHmmss_SSS.jpg/.dng`.
-- Video: H.264 MP4 with AAC sound, 1080p at 20 Mbit/s on the rear camera (720p front),
+- Video quality picker (quick panel and video settings): 720p 30, 720p 60, 1080p 30, 1080p 60,
+  4K 30, each shown only when the camera lists that size for the recorder and the YUV path, the
+  frame rate is in its AE ranges (60 fps needs a listed 60 fps range: Android's LEGACY layer drops
+  any other) and an H.264 encoder declares it in `media_codecs.xml`. Bit rates 10, 16, 20, 32 and
+  48 Mbit/s. A choice the current camera lacks falls back to the nearest one it has (badge in
+  the viewfinder). On LEGACY cameras (HAL1) the video session also gets an unused 16:9 JPEG
+  stream, so Android's compatibility layer picks the HAL's 16:9 preview mode instead of the
+  largest one, and the recording hint is set from the viewfinder on.
+- Video: H.264 MP4 with AAC sound, 1080p at 20 Mbit/s on the rear camera (720p front) by default,
   `VID_…mp4`. Two paths: the camera writes straight into the encoder's input surface (ROMs
   whose gralloc accepts camera → encoder buffers, from the 31/10 build on), or camera → YUV →
   GL → recorder on builds whose gralloc refuses them (`usage 0x30023`, BAD_VALUE). Arco tries the

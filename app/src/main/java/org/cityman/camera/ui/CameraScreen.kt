@@ -95,6 +95,7 @@ import kotlinx.coroutines.delay
 import org.cityman.camera.R
 import org.cityman.camera.camera.CameraController
 import org.cityman.camera.camera.DeviceSupport
+import org.cityman.camera.camera.VideoQuality
 import org.cityman.camera.camera.CameraState
 import org.cityman.camera.camera.CaptureMode
 import org.cityman.camera.camera.PhotoFormat
@@ -208,6 +209,10 @@ fun CameraScreen(
                 )
             }
             if (st.saveDng && st.mode == CaptureMode.PHOTO && !(st.multiFrame && mfReady)) Badge("RAW")
+            if (st.mode == CaptureMode.VIDEO) {
+                // What this camera records for the chosen quality (the nearest it offers).
+                st.caps?.let { c -> VideoQuality.pick(c.videoQualities, st.videoQuality) }?.let { Badge(it.badge) }
+            }
             // Exposure / white balance lock, both modes.
             Badge(
                 "AE",
@@ -309,6 +314,7 @@ fun CameraScreen(
                 state = st,
                 onTimelapse = { controller.setTimelapse(it) },
                 onStabilise = { controller.setStabilise(it) },
+                onVideoQuality = { controller.setVideoQuality(it) },
                 onGrid = { controller.setGrid(it) },
                 onDng = { controller.setSaveDng(it) },
                 onMultiFrame = { controller.setMultiFrame(it) },
@@ -808,6 +814,7 @@ private fun QuickPanel(
     state: CameraState,
     onTimelapse: (Int) -> Unit,
     onStabilise: (Boolean) -> Unit,
+    onVideoQuality: (VideoQuality) -> Unit,
     onGrid: (Boolean) -> Unit,
     onDng: (Boolean) -> Unit,
     onMultiFrame: (Boolean) -> Unit,
@@ -839,6 +846,19 @@ private fun QuickPanel(
             )
         }
         if (!photo) {
+            val qualities = state.caps?.videoQualities.orEmpty()
+            if (qualities.isNotEmpty()) {
+                Choice(
+                    title = stringResource(R.string.settings_video_quality),
+                    desc = null,
+                    options = qualities.map { it to it.label },
+                    selected = VideoQuality.pick(qualities, state.videoQuality),
+                    enabled = !state.recording,
+                    wrap = true,
+                    titleStyle = title,
+                    onSelect = onVideoQuality,
+                )
+            }
             Choice(
                 title = stringResource(R.string.settings_timelapse),
                 desc = null,
