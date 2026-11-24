@@ -220,7 +220,12 @@ class MainActivity : ComponentActivity() {
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean = when (keyCode) {
-        KeyEvent.KEYCODE_CAMERA, KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN, KeyEvent.KEYCODE_FOCUS -> true
+        KeyEvent.KEYCODE_CAMERA, KeyEvent.KEYCODE_VOLUME_UP, KeyEvent.KEYCODE_VOLUME_DOWN -> true
+        KeyEvent.KEYCODE_FOCUS -> {
+            // Half press released: the focus it held is free again.
+            if (hasCamera) controller.focusKeyUp()
+            true
+        }
         else -> super.onKeyUp(keyCode, event)
     }
 

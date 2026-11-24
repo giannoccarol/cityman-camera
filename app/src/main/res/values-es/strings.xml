@@ -88,6 +88,7 @@
     <string name="a11y_stop">Detener grabación</string>
     <string name="a11y_gallery">Abrir galería</string>
     <string name="a11y_ae">Bloqueo de exposición</string>
+    <string name="a11y_focus_lock">Enfoque y exposición bloqueados en un punto. Toca para liberar.</string>
     <string name="shortcut_video">Vídeo</string>
     <string name="shortcut_selfie">Selfie</string>
     <string name="settings_location">Guardar ubicación</string>

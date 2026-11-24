@@ -69,6 +69,8 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.role
@@ -136,6 +138,7 @@ fun CameraScreen(
         }
     }
 
+    val haptic = LocalHapticFeedback.current
     BoxWithConstraints(Modifier.fillMaxSize().background(Color.Black)) {
         val density = LocalDensity.current
         val w = maxWidth
@@ -158,6 +161,12 @@ fun CameraScreen(
                     showSettings = false
                 } else {
                     controller.tapToFocus(x, y)
+                }
+            },
+            onLongPress = { x, y ->
+                if (openDial == null && !showSettings) {
+                    haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                    controller.lockFocus(x, y)
                 }
             },
             modifier = Modifier.align(if (portrait) Alignment.TopCenter else Alignment.CenterStart).size(vfWidth, vfHeight),
@@ -198,6 +207,7 @@ fun CameraScreen(
             }
             val mfDesc = stringResource(R.string.settings_mf_title)
             val aeDesc = stringResource(R.string.a11y_ae)
+            val lockDesc = stringResource(R.string.a11y_focus_lock)
             val mfReady = st.caps?.multiFrameReady == true
             if (st.mode == CaptureMode.PHOTO && mfReady) {
                 // Quick switch for multi-frame processing.
@@ -222,7 +232,14 @@ fun CameraScreen(
             )
             if (st.mode == CaptureMode.VIDEO && st.timelapse > 1) Badge("${st.timelapse}×")
             if (st.multiFrame && mfReady && st.still && st.mode == CaptureMode.PHOTO) Badge(stringResource(R.string.badge_still))
-            if (st.focusPoint != null) Badge(stringResource(R.string.badge_locked))
+            // Shown for a long-press lock only (a tap lets go by itself); tapping it releases the point.
+            if (st.focusLocked) {
+                Badge(
+                    stringResource(R.string.badge_locked),
+                    modifier = Modifier.clip(RoundedCornerShape(4.dp)).clickable { controller.clearFocusPoint() }
+                        .semantics { contentDescription = lockDesc; role = Role.Button },
+                )
+            }
             if (st.rapidCount > 0) Badge("×${st.rapidCount}")
         }
 
@@ -348,10 +365,12 @@ private fun Viewfinder(
     state: CameraState,
     showGrid: Boolean,
     onTap: (Float, Float) -> Unit,
+    onLongPress: (Float, Float) -> Unit,
     modifier: Modifier,
 ) {
     val zoom by rememberUpdatedState(state.zoom)
     val tap by rememberUpdatedState(onTap)
+    val longPress by rememberUpdatedState(onLongPress)
     val flash = remember { Animatable(0f) }
     LaunchedEffect(state.shutterCount) {
         if (state.shutterCount > 0) {
@@ -364,7 +383,7 @@ private fun Viewfinder(
             .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = { o -> tap(o.x / size.width, o.y / size.height) },
-                    onLongPress = { controller.clearFocusPoint() },
+                    onLongPress = { o -> longPress(o.x / size.width, o.y / size.height) },
                 )
             }
             .pointerInput(Unit) {

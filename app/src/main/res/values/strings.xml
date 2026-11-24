@@ -89,6 +89,7 @@
     <string name="a11y_stop">Stop recording</string>
     <string name="a11y_gallery">Open gallery</string>
     <string name="a11y_ae">Exposure lock</string>
+    <string name="a11y_focus_lock">Focus and metering locked on a point. Tap to release.</string>
     <string name="shortcut_video">Video</string>
     <string name="shortcut_selfie">Selfie</string>
     <string name="settings_location">Save location</string>

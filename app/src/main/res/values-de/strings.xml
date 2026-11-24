@@ -88,6 +88,7 @@
     <string name="a11y_stop">Aufnahme beenden</string>
     <string name="a11y_gallery">Galerie öffnen</string>
     <string name="a11y_ae">Belichtungssperre</string>
+    <string name="a11y_focus_lock">Fokus und Belichtung auf einen Punkt gesperrt. Zum Lösen tippen.</string>
     <string name="shortcut_video">Video</string>
     <string name="shortcut_selfie">Selfie</string>
     <string name="settings_location">Standort speichern</string>

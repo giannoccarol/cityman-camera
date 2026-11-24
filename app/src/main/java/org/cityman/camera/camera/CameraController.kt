@@ -122,8 +122,10 @@ data class CameraState(
     val thumbnail: Bitmap? = null,
     val lastUri: Uri? = null,
     val lastIsVideo: Boolean = false,
-    /** Tap point in normalised viewfinder coordinates, while a tap focus/metering lock is active. */
+    /** Tap point in normalised viewfinder coordinates, while focus and metering are held on it. */
     val focusPoint: Pair<Float, Float>? = null,
+    /** The point was set with a long press: it stays until the user releases it. */
+    val focusLocked: Boolean = false,
     val shutterCount: Int = 0,
     val message: String? = null,
 )
@@ -268,6 +270,8 @@ class CameraController(private val context: Context) {
     private var zoom = 1f
     private var focusRegion: MeteringRectangle? = null
     private var meterRegion: MeteringRectangle? = null
+    /** The focus key is half pressed and holds the focus it found. */
+    private var keyAf = false
     private var afState = CaptureResult.CONTROL_AF_STATE_INACTIVE
     private var autoIso = 100
     private var autoExposureNs = 33_000_000L
@@ -424,7 +428,8 @@ class CameraController(private val context: Context) {
         Log.i(TAG, "controls $c")
         if (c.focusDiopters != null) {
             focusRegion = null
-            _state.update { it.copy(focusPoint = if (meterRegion != null) it.focusPoint else null) }
+            // Manual focus takes the lens: the tap point stays only as a metering point.
+            if (meterRegion == null) clearTapRegions()
         }
         _state.update { it.copy(controls = c) }
         startRepeating()
@@ -439,10 +444,19 @@ class CameraController(private val context: Context) {
 
     fun clearMessage() = _state.update { it.copy(message = null) }
 
-    /** Focus and meter on a viewfinder point, given in normalised (0..1) view coordinates. */
-    fun tapToFocus(nx: Float, ny: Float) = camHandler.post {
-        val c = caps ?: return@post
-        val preview = _state.value.previewSize ?: return@post
+    /**
+     * Tap: focus and meter on a viewfinder point, given in normalised (0..1) view coordinates.
+     * The point is held for [TAP_FOCUS_HOLD_MS], then continuous focus takes over again.
+     */
+    fun tapToFocus(nx: Float, ny: Float) = camHandler.post { focusAt(nx, ny, lock = false) }
+
+    /** Long press: the same point, kept (AF·AE lock) until the next tap or [clearFocusPoint]. */
+    fun lockFocus(nx: Float, ny: Float) = camHandler.post { focusAt(nx, ny, lock = true) }
+
+    /** cam thread */
+    private fun focusAt(nx: Float, ny: Float, lock: Boolean) {
+        val c = caps ?: return
+        val preview = _state.value.previewSize ?: return
         val crop = cropRegion(c)
         var u = nx.coerceIn(0f, 1f)
         var v = ny.coerceIn(0f, 1f)
@@ -471,22 +485,78 @@ class CameraController(private val context: Context) {
             (sy + half).roundToInt().coerceIn(1, ah),
         )
         val region = MeteringRectangle(r, MeteringRectangle.METERING_WEIGHT_MAX - 1)
-        meterRegion = if (c.maxAeRegions > 0) region else null
-        focusRegion = if (c.hasAutoFocus && c.maxAfRegions > 0 && controls.focusDiopters == null) region else null
-        _state.update { it.copy(focusPoint = nx to ny) }
+        val meter = if (c.maxAeRegions > 0) region else null
+        val focus = if (c.hasAutoFocus && c.maxAfRegions > 0 && controls.focusDiopters == null) region else null
+        // Neither regions for focus nor for metering on this camera: a tap has nothing to do.
+        if (meter == null && focus == null) return
+        camHandler.removeCallbacks(tapRelease)
+        meterRegion = meter
+        focusRegion = focus
+        _state.update { it.copy(focusPoint = nx to ny, focusLocked = lock) }
+        Log.i(TAG, "focus point ${String.format(java.util.Locale.US, "%.2f,%.2f", nx, ny)}: ${if (focus != null) "AF" else "-"} ${if (meter != null) "AE" else "-"}, ${if (lock) "locked" else "held ${TAP_FOCUS_HOLD_MS / 1000} s"}")
         startRepeating()
-        if (focusRegion != null) triggerAf()
+        if (focus != null) triggerAf()
+        if (!lock) camHandler.postDelayed(tapRelease, TAP_FOCUS_HOLD_MS)
     }
 
+    /** Releases the tap point now (or as soon as the photo being taken is done). */
     fun clearFocusPoint() = camHandler.post {
-        clearTapRegions()
-        startRepeating()
+        camHandler.removeCallbacks(tapRelease)
+        tapRelease.run()
     }
 
-    /** Half press of the camera key. */
+    /**
+     * A tap's time is up, or the user released a locked point: back to continuous focus and
+     * whole-frame metering. Never under a photo being taken or a rapid-fire run, where focus
+     * and exposure must stay put: it waits for the end.
+     */
+    private val tapRelease = object : Runnable {
+        override fun run() {
+            if (focusRegion == null && meterRegion == null) {
+                if (_state.value.focusPoint != null) clearTapRegions()
+                return
+            }
+            if (shot != null || rapid) {
+                camHandler.postDelayed(this, 300)
+                return
+            }
+            val hadFocus = focusRegion != null
+            clearTapRegions()
+            Log.i(TAG, "focus point released")
+            // The lens was parked by the tap's trigger: cancel it so continuous focus scans again.
+            if (hadFocus) cancelAfTrigger()
+            startRepeating()
+        }
+    }
+
+    /** Half press of the camera key: focus, and hold it for as long as the key stays down. */
     fun focusKey() = camHandler.post {
         val c = caps ?: return@post
-        if (c.hasAutoFocus && controls.focusDiopters == null) triggerAf()
+        if (!c.hasAutoFocus || controls.focusDiopters != null) return@post
+        camHandler.removeCallbacks(keyAfRelease)
+        keyAf = true
+        triggerAf()
+    }
+
+    /** The camera key is up again: continuous focus resumes. */
+    fun focusKeyUp() = camHandler.post {
+        if (!keyAf) return@post
+        keyAf = false
+        camHandler.removeCallbacks(keyAfRelease)
+        keyAfRelease.run()
+    }
+
+    private val keyAfRelease = object : Runnable {
+        override fun run() {
+            // The photo being taken releases its own trigger; this one waits for it to end.
+            if (shot != null) {
+                camHandler.postDelayed(this, 300)
+                return
+            }
+            // With a tap point the focus belongs to it, and is released with it.
+            if (keyAf || focusRegion != null) return
+            cancelAfTrigger()
+        }
     }
 
     /** Lock-screen launch: hide earlier photos (thumbnail) until the app is opened normally. */
@@ -839,6 +909,10 @@ class CameraController(private val context: Context) {
         _analysis.value = null
         waitingAf = false
         camHandler.removeCallbacks(afTimeout)
+        // A tap point belongs to the camera and the view it was set on.
+        clearTapRegions()
+        keyAf = false
+        camHandler.removeCallbacks(keyAfRelease)
     }
 
     /**
@@ -1128,9 +1202,10 @@ class CameraController(private val context: Context) {
     }
 
     private fun clearTapRegions() {
+        camHandler.removeCallbacks(tapRelease)
         focusRegion = null
         meterRegion = null
-        _state.update { it.copy(focusPoint = null) }
+        _state.update { it.copy(focusPoint = null, focusLocked = false) }
     }
 
     // ---- request settings ---------------------------------------------------------------
@@ -2258,6 +2333,8 @@ class CameraController(private val context: Context) {
         private const val MAX_AUTO_SHUTTER_NS = 250_000_000L
         private const val MAX_BURST = BurstPlanner.MAX_FRAMES
         private const val MAX_RAPID = 30
+        /** How long a tap keeps focus and metering on its point before continuous focus resumes. */
+        private const val TAP_FOCUS_HOLD_MS = 5000L
         private const val SAFETY_TAG = "arco-safety-jpeg"
         /** Margin after the burst exposures before missing frames are given up. */
         private const val BURST_TIMEOUT_MARGIN_MS = 4000L

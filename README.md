@@ -65,9 +65,12 @@ AndroidX libraries in use require). It also runs on older phones and ROMs: see
   - **EV**: −2 to +2 in thirds, while ISO or shutter is still automatic. With only one of ISO
     and shutter set, the other one keeps the exposure last measured by auto exposure, shifted
     by EV.
-- Tap the viewfinder to focus and meter on a point (AF·AE lock); long-press it to unlock.
-  Pinch to zoom (crop, up to 4×).
-- Hardware camera key: half press focuses, full press shoots. Volume keys also shoot.
+- Tap the viewfinder to focus and meter on a point: Arco holds it for 5 seconds (through a
+  photo, if one is being taken), then continuous focus and whole-frame metering come back.
+  Long-press to keep the point (AF·AE lock) until the next tap, or until the AF·AE LOCK badge
+  is tapped. Pinch to zoom (crop, up to 4×).
+- Hardware camera key: half press focuses and holds the focus while the key stays down, full
+  press shoots. Volume keys also shoot.
 - Gallery thumbnail of the last photo or video: opens the gallery in review mode, so the camera
   album can be swiped through; the gallery app can be chosen in the settings.
 - Launcher shortcuts (Video, Selfie), spoken labels for TalkBack, translations in Italian,
@@ -183,7 +186,9 @@ adb shell am broadcast -a org.cityman.camera.DEBUG --ez dng true --ei iso 200 --
 Extras: `dng`, `mf`, `frames`, `iso` (0 = auto), `shutter_us`, `wb` (Kelvin, 0 = auto),
 `focus` (diopters, −1 = auto), `ev` (steps), `reset`, `mode` (`photo`/`video`), `zoom`,
 `timelapse`, `stabilise`, `tools` (`h`/`z`/`p`), `zsl` (RAW in every viewfinder frame, for the
-zero shutter lag study), `switch`, `shoot`. See `DebugCommands.kt`.
+zero shutter lag study), `tap` and `lock` (a viewfinder point as `x,y` in 0..1: what a tap or a
+long press there does), `unlock`, `focuskey` (half press of the camera key, down or up),
+`switch`, `shoot`. See `DebugCommands.kt`.
 
 Unit tests (dial labels, Planckian locus, noise model fit) run on the host:
 

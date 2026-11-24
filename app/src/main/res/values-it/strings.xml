@@ -88,6 +88,7 @@
     <string name="a11y_stop">Ferma registrazione</string>
     <string name="a11y_gallery">Apri galleria</string>
     <string name="a11y_ae">Blocco esposizione</string>
+    <string name="a11y_focus_lock">Fuoco ed esposizione bloccati su un punto. Tocca per sbloccare.</string>
     <string name="shortcut_video">Video</string>
     <string name="shortcut_selfie">Selfie</string>
     <string name="settings_location">Salva posizione</string>

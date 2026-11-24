@@ -88,6 +88,7 @@
     <string name="a11y_stop">Arrêter l\'enregistrement</string>
     <string name="a11y_gallery">Ouvrir la galerie</string>
     <string name="a11y_ae">Verrouillage de l\'exposition</string>
+    <string name="a11y_focus_lock">Mise au point et exposition verrouillées sur un point. Touchez pour libérer.</string>
     <string name="shortcut_video">Vidéo</string>
     <string name="shortcut_selfie">Selfie</string>
     <string name="settings_location">Enregistrer la position</string>

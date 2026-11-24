@@ -13,7 +13,9 @@ import org.cityman.camera.camera.ManualControls
  * Extras: tools (string with h/z/p: histogram, zebra, peaking), dng (bool), bursts (bool, save RAW
  * bursts for the burst lab), denoise / chroma / sharpen (bool, multi-frame finishing steps), mf (bool), frames (int, 0 = auto), iso (int, 0 = auto), shutter_us (long, 0 = auto), wb (int K, 0 = auto),
  * focus (float diopters, -1 = auto), ev (int steps), reset (bool), mode (photo|video), switch (bool,
- * next camera), shoot (bool; in video mode it starts or stops recording).
+ * next camera), shoot (bool; in video mode it starts or stops recording), tap / lock ("x,y" in 0..1:
+ * the viewfinder point a tap or a long press would give), unlock (bool), focuskey (bool: half press
+ * of the camera key down / up).
  */
 object DebugCommands {
     const val ACTION = "org.cityman.camera.DEBUG"
@@ -55,7 +57,18 @@ object DebugCommands {
         if (extras.containsKey("timelapse")) controller.setTimelapse(extras.getInt("timelapse"))
         if (extras.containsKey("stabilise")) controller.setStabilise(extras.getBoolean("stabilise"))
         if (extras.containsKey("zoom")) controller.setZoom(extras.getFloat("zoom"))
+        // Viewfinder point as "x,y" in 0..1: `tap` holds it for a while, `lock` keeps it, `unlock` lets go.
+        point(extras.getString("tap"))?.let { (x, y) -> controller.tapToFocus(x, y) }
+        point(extras.getString("lock"))?.let { (x, y) -> controller.lockFocus(x, y) }
+        if (extras.getBoolean("unlock")) controller.clearFocusPoint()
+        if (extras.containsKey("focuskey")) { if (extras.getBoolean("focuskey")) controller.focusKey() else controller.focusKeyUp() }
         if (extras.getBoolean("switch")) controller.switchCamera()
         if (extras.getBoolean("shoot")) controller.shutter()
+    }
+
+    /** "x,y" → the two numbers, or null when the text is not that. */
+    private fun point(text: String?): Pair<Float, Float>? {
+        val p = text?.split(',')?.mapNotNull { it.trim().toFloatOrNull() } ?: return null
+        return if (p.size == 2) p[0] to p[1] else null
     }
 }
