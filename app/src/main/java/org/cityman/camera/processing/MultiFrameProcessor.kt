@@ -11,6 +11,9 @@ import android.os.SystemClock
 import android.util.Log
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
+import kotlin.math.abs
+import kotlin.math.ceil
+import kotlin.math.exp
 import kotlin.math.ln
 import kotlin.math.max
 import kotlin.math.min
@@ -363,6 +366,10 @@ class MultiFrameProcessor {
             val out = if (accCur == 0) accs!![1] else accs!![0]
             denoiseMultiScale(mq, out, lsc, gains)
             mqFinal = out
+            // The colour step and the tone-mapping base keep reading the half image PREP made
+            // from the merged pixels, on purpose. Measured in the burst lab (24/11/2026) on a
+            // smooth dark scene: taking the colour from this denoised image instead leaves
+            // 5-45 % more coarse colour noise than the blur of the merged one.
         }
         // The burst buffers are no longer needed: free them before the full-size images.
         lsc.release()
@@ -651,8 +658,9 @@ class MultiFrameProcessor {
             histBuffer = ids[0]
         }
         GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, histBuffer)
-        val zeros = ByteBuffer.allocateDirect(HIST * 4).order(ByteOrder.nativeOrder())
-        GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, HIST * 4, zeros, GLES31.GL_DYNAMIC_READ)
+        // Two histograms: every sample, then the samples in flat areas only.
+        val zeros = ByteBuffer.allocateDirect(2 * HIST * 4).order(ByteOrder.nativeOrder())
+        GLES31.glBufferData(GLES31.GL_SHADER_STORAGE_BUFFER, 2 * HIST * 4, zeros, GLES31.GL_DYNAMIC_READ)
         GLES31.glBindBufferBase(GLES31.GL_SHADER_STORAGE_BUFFER, 3, histBuffer)
         val p = program("noise", Shaders.NOISE)
         p.use()
@@ -660,13 +668,20 @@ class MultiFrameProcessor {
         alt!!.bindImage(1, GLES31.GL_READ_ONLY)
         align[0].bindImage(2, GLES31.GL_READ_ONLY)
         p.set("uTile", LEVELS[0].tile)
+        val guess = noiseGuess(s.iso)
+        p.set("uGate", guess[0], guess[1], NOISE_GATE, 0f)
         p.dispatch((ref!!.width + 3) / 4, (ref!!.height + 3) / 4)
         GLES31.glBindBuffer(GLES31.GL_SHADER_STORAGE_BUFFER, histBuffer)
-        val mapped = GLES31.glMapBufferRange(GLES31.GL_SHADER_STORAGE_BUFFER, 0, HIST * 4, GLES31.GL_MAP_READ_BIT) as ByteBuffer
-        val counts = IntArray(HIST)
+        val mapped = GLES31.glMapBufferRange(GLES31.GL_SHADER_STORAGE_BUFFER, 0, 2 * HIST * 4, GLES31.GL_MAP_READ_BIT) as ByteBuffer
+        val counts = IntArray(2 * HIST)
         mapped.order(ByteOrder.nativeOrder()).asIntBuffer().get(counts)
         GLES31.glUnmapBuffer(GLES31.GL_SHADER_STORAGE_BUFFER)
-        noise = fitNoise(counts, s.iso)
+        // One sensor step in the quad's units (black removed, white = 1).
+        val quantum = 1.0 / (s.white - s.black.average())
+        noise = fitNoise(counts, s.iso, quantum)
+        val all = (0 until HIST).sumOf { counts[it].toLong() }
+        val flat = (HIST until 2 * HIST).sumOf { counts[it].toLong() }
+        Log.i(TAG, String.format(java.util.Locale.US, "noise a=%.3g b=%.3g (read %.2f DN), %d samples, %d %% flat", noise[0], noise[1], sqrt(noise[1].toDouble()) / quantum, all, if (all > 0) flat * 100 / all else 0))
     }
 
     private fun merge(short: Boolean, hdr: Boolean) {
@@ -887,35 +902,66 @@ class MultiFrameProcessor {
         fun chromaStrength(iso: Int, gain: Float): Float =
             (0.35f + 0.5f * ln(max(1f, iso * gain / 100f)) / ln(16f)).coerceIn(0.35f, 0.9f)
 
+        /** Flat-area test of the noise histogram: (max − min of 8 neighbours)² ≤ this × the guessed variance. */
+        private const val NOISE_GATE = 30f
+
+        /** Rough noise model from the ISO alone: the fallback, and the scale of the flat-area test. */
+        fun noiseGuess(iso: Int): FloatArray =
+            floatArrayOf((1.2e-4 * iso / 100.0).toFloat(), (4e-7 * (iso / 100.0) * (iso / 100.0)).toFloat())
+
         /**
-         * Fits variance = a·x + b from the |difference| histograms: per brightness bin the median
-         * |d| of two frames gives sigma = median / (0.6745·√2).
+         * Fits variance = a·x + b from the |difference| histograms of two aligned frames.
+         *
+         * [counts]: 16 brightness bins × 64 difference bins, optionally followed by the same
+         * histogram of flat areas only, which is used when it kept at least a tenth of the
+         * samples. [quantum]: one sensor step in the histogram's units (0 for continuous data).
+         *
+         * Per brightness bin, sigma comes from the share of differences below a threshold near
+         * the median, through the normal distribution. Sensor values are whole steps, so the
+         * share of differences up to k steps is that of a continuous difference below k + ½: the
+         * median itself can only land on a whole step, which at 1-2 steps of noise (the shadows)
+         * is wrong by up to 2× either way. The line is fitted with the relative error of each
+         * variance, so the dark bins decide b instead of being outvoted by the bright ones, and
+         * b never goes below the quantisation noise.
          */
-        fun fitNoise(counts: IntArray, iso: Int): FloatArray {
+        fun fitNoise(counts: IntArray, iso: Int, quantum: Double = 0.0): FloatArray {
+            val guess = noiseGuess(iso)
+            var base = 0
+            if (counts.size >= 2 * HIST) {
+                var all = 0L
+                var flat = 0L
+                for (i in 0 until HIST) { all += counts[i]; flat += counts[HIST + i] }
+                if (flat * 10 >= all) base = HIST
+            }
+            val floor = if (quantum > 0.0) quantum * quantum / 12.0 else 1e-7
             val xs = ArrayList<Double>()
             val vs = ArrayList<Double>()
             val ws = ArrayList<Double>()
             for (bb in 0 until 16) {
                 var total = 0L
-                for (db in 0 until 64) total += counts[bb * 64 + db]
+                for (db in 0 until 64) total += counts[base + bb * 64 + db]
                 if (total < 400) continue
                 var run = 0L
-                var median = 0.0
-                for (db in 0 until 64) {
-                    run += counts[bb * 64 + db]
-                    if (run * 2 >= total) {
-                        val t = (db + 0.5) / 64.0
-                        median = t * t * 0.12
-                        break
-                    }
+                var share = -1.0
+                var threshold = 0.0
+                for (db in 0 until 63) {
+                    run += counts[base + bb * 64 + db]
+                    val f = run.toDouble() / total
+                    if (f < 0.2) continue
+                    val edge = ((db + 1) / 64.0).let { it * it } * 0.12
+                    // Whole steps: the last one below the edge, plus half a step.
+                    val t = if (quantum > 0.0) (ceil(edge / quantum - 1e-6) - 0.5) * quantum else edge
+                    if (share < 0.0 || abs(f - 0.5) < abs(share - 0.5)) { share = f; threshold = t }
+                    if (f >= 0.5) break
                 }
-                val sigma = median / (0.6745 * sqrt(2.0))
+                if (share < 0.0) continue
+                // |difference| of two frames below t with probability erf(t / (σd·√2)), σd = σ·√2.
+                val sigmaD = threshold / (sqrt(2.0) * erfInv(min(share, 0.98)))
+                val v = max(0.5 * sigmaD * sigmaD, floor)
                 val x = ((bb + 0.5) / 16.0).let { it * it }
-                xs += x; vs += sigma * sigma; ws += total.toDouble()
+                xs += x; vs += v; ws += total / (v * v)
             }
-            val fallbackA = 1.2e-4 * iso / 100.0
-            val fallbackB = 4e-7 * (iso / 100.0) * (iso / 100.0)
-            if (xs.size < 3) return floatArrayOf(fallbackA.toFloat(), fallbackB.toFloat())
+            if (xs.size < 3) return guess
             // Weighted least squares for v = a x + b.
             var sw = 0.0; var sx = 0.0; var sv = 0.0; var sxx = 0.0; var sxv = 0.0
             for (i in xs.indices) {
@@ -923,11 +969,35 @@ class MultiFrameProcessor {
                 sw += w; sx += w * xs[i]; sv += w * vs[i]; sxx += w * xs[i] * xs[i]; sxv += w * xs[i] * vs[i]
             }
             val den = sw * sxx - sx * sx
-            var a = if (den != 0.0) (sw * sxv - sx * sv) / den else fallbackA
+            var a = if (den > 0.0) (sw * sxv - sx * sv) / den else guess[0].toDouble()
+            if (a <= 0.0) a = guess[0].toDouble()
             var b = (sv - a * sx) / sw
-            if (a <= 0.0) a = fallbackA
-            b = max(b, 1e-7)
+            if (b < floor) {
+                // The best line through the floor instead.
+                b = floor
+                var num = 0.0
+                for (i in xs.indices) num += ws[i] * xs[i] * (vs[i] - b)
+                a = if (sxx > 0.0 && num > 0.0) num / sxx else guess[0].toDouble()
+            }
             return floatArrayOf(min(a, 0.05).toFloat(), min(b, 0.01).toFloat())
+        }
+
+        /** Error function, Abramowitz & Stegun 7.1.26 (error below 1.5e-7). */
+        private fun erf(x: Double): Double {
+            val t = 1.0 / (1.0 + 0.3275911 * abs(x))
+            val y = 1.0 - (((((1.061405429 * t - 1.453152027) * t) + 1.421413741) * t - 0.284496736) * t + 0.254829592) * t * exp(-x * x)
+            return if (x >= 0) y else -y
+        }
+
+        /** Inverse error function on 0..1, by bisection. */
+        internal fun erfInv(p: Double): Double {
+            var lo = 0.0
+            var hi = 4.0
+            repeat(40) {
+                val mid = 0.5 * (lo + hi)
+                if (erf(mid) < p) lo = mid else hi = mid
+            }
+            return 0.5 * (lo + hi)
         }
     }
 }

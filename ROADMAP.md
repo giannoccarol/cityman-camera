@@ -77,6 +77,36 @@ spinner veloce. **Aperto:** un secondo scatto subito dopo il primo trova il tele
 di memoria (lmkd a pressione media, 600 MB disponibili): un fotogramma impiega 4,6 s, 3 fotogrammi
 su 10 vanno persi e l'interfaccia salta di nuovo. Da riprendere con il rilascio dei buffer RAW.
 
+### Stima del rumore (24/11, branch `video-quality`, non in una release)
+
+Revisione degli algoritmi chiesta dall'utente. Trovato con una simulazione e corretto (shader `NOISE`,
+`fitNoise`, stessa cosa nel laboratorio): la stima del rumore di ogni raffica sbagliava in due sensi.
+
+- **Ombre.** I valori del sensore sono passi interi: con 0,6-2 passi di rumore la mediana delle
+  differenze cade solo su passi interi e la varianza del gruppo più scuro usciva tra 0,45 e 1,7 volte
+  quella vera; `b` finiva spesso al limite di 1e-7 (il punto aperto della revisione del 15/11). Con il
+  rumore sottostimato la fusione scarta i fotogrammi nelle ombre e il filtro spaziale le lascia stare.
+  È una **possibile** causa della foto più rumorosa dello sviluppo del laboratorio nelle zone scure:
+  da verificare sul telefono.
+- **Scene dettagliate.** Il residuo della trama tra due fotogrammi contava come rumore (stima da 1,7
+  a 7,4 volte troppo alta sul grafico sintetico): il filtro spaziale toglieva dettaglio. Sulla
+  raffica sintetica da 8 fotogrammi la foto finale passa da 34,3 a 45,8 dB (45,9 con il rumore vero).
+
+Ora: gruppi di luminosità dalla media dei due fotogrammi, solo campioni in zone piatte (otto vicini
+del riferimento), sigma dalla quota di differenze sotto una soglia a mezzo passo, retta pesata con
+l'errore relativo. Nel log `ArcoMerge` la riga `noise a=… b=… (read … DN), … % flat`.
+
+Provato solo con simulazioni e raffiche sintetiche (sul PC non c'erano raffiche vere). **Da fare sul
+950 XL:** due raffiche (interno scuro, esterno dettagliato) con "Salva burst", controllare la riga
+del rumore e confrontare ombre e dettaglio con la 0.5.1.
+
+Nella stessa revisione, misurati e **scartati**: sub-pixel per tutti i riquadri dell'allineamento
+(oggi lo ha il 20-26 %; nessun guadagno, ±0,15 dB) e passaggio del colore sull'immagine già ripulita
+(5-45 % di rumore di colore grossolano in più). Resta aperto: il filtro multi-scala dimezza l'errore
+totale ma non riduce quello a bassa frequenza (macchie larghe). Numeri in `tools/burst-lab/README.md`.
+
+Nuovo test: tutti gli shader di calcolo compilati con `glslangValidator`, quando è installato.
+
 ### Android 11 e 12 (9/11, release 0.4.0)
 
 `minSdk` da 33 a 30: Arco si installa su Android 11 (950 XL con LineageOS 18.1, Lumia 1520 e 930).

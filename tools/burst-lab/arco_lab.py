@@ -29,6 +29,7 @@ import sys
 import numpy as np
 from PIL import Image
 from scipy import ndimage
+from scipy.special import erfinv
 
 # ---------------------------------------------------------------------------
 # Loading
@@ -173,25 +174,94 @@ def warp(q, offs, tile=16):
     return np.stack([ndimage.map_coordinates(q[..., c], coords, order=1, mode="nearest") for c in range(4)], -1)
 
 # ---------------------------------------------------------------------------
-# Noise model (as NOISE + fitNoise: median |difference| per brightness bin)
+# Noise model (as NOISE + fitNoise)
 
-def fit_noise(ref, alt):
-    x = np.clip(ref, 0, None).ravel()[::7]
-    d = np.abs(alt - ref).ravel()[::7]
+NOISE_GATE = 30.0   # flat when (max - min of the 8 neighbours)^2 <= this * guessed variance
+
+
+def noise_guess(iso):
+    """Rough model from the ISO alone: the fallback, and the scale of the flat-area test."""
+    return 1.2e-4 * iso / 100.0, 4e-7 * (iso / 100.0) ** 2
+
+
+def noise_hist(ref, alt, offs, iso, tile=16, step=4):
+    """
+    As the NOISE shader: every 4th quad pixel, whole-pixel tile offsets, all four channels;
+    16 brightness bins (from the mean of the two frames) x 64 difference bins, twice: every
+    sample, then only those whose eight neighbours in the reference span no more than the
+    guessed noise allows (texture: a sub-pixel misalignment there is not noise).
+    """
+    h, w = ref.shape[:2]
+    yy, xx = np.mgrid[0:h:step, 0:w:step]
+    o = np.floor(offs[np.minimum(yy // tile, offs.shape[0] - 1), np.minimum(xx // tile, offs.shape[1] - 1)] + 0.5).astype(int)
+    r = ref[yy, xx]
+    a = alt[np.clip(yy + o[..., 0], 0, h - 1), np.clip(xx + o[..., 1], 0, w - 1)]
+    nb = [ref[np.clip(yy + dy, 0, h - 1), np.clip(xx + dx, 0, w - 1)] for dy in (-1, 0, 1) for dx in (-1, 0, 1) if (dy, dx) != (0, 0)]
+    ga, gb = noise_guess(iso)
+    span = np.maximum.reduce(nb) - np.minimum.reduce(nb)
+    flat = span ** 2 <= NOISE_GATE * (ga * np.maximum(sum(nb) / 8.0, 0) + gb)
+    bb = np.clip((np.sqrt(np.maximum(0.5 * (r + a), 0)) * 16).astype(int), 0, 15)
+    db = np.minimum((np.sqrt(np.abs(a - r) / 0.12) * 64).astype(int), 63)
+    counts = np.zeros(2 * 1024, np.int64)
+    np.add.at(counts, (bb * 64 + db).ravel(), 1)
+    np.add.at(counts, 1024 + (bb * 64 + db)[flat], 1)
+    return counts
+
+
+def fit_noise_counts(counts, iso, quantum=0.0):
+    """
+    As fitNoise: per brightness bin, sigma from the share of differences below a threshold near
+    the median (half a sensor step above the last whole step it includes), then variance = a x + b
+    fitted with the relative error of each bin, b not below the quantisation noise.
+    """
+    guess = noise_guess(iso)
+    base = 1024 if counts.size >= 2048 and counts[1024:].sum() * 10 >= counts[:1024].sum() else 0
+    floor = quantum * quantum / 12 if quantum > 0 else 1e-7
     xs, vs, ws = [], [], []
-    bins = (np.sqrt(x) * 16).astype(int).clip(0, 15)
-    for b in range(16):
-        sel = d[bins == b]
-        if sel.size < 400:
+    for bb in range(16):
+        c = counts[base + bb * 64: base + (bb + 1) * 64]
+        total = int(c.sum())
+        if total < 400:
             continue
-        sigma = np.median(sel) / (0.6745 * math.sqrt(2))
-        xs.append(((b + 0.5) / 16) ** 2)
-        vs.append(sigma ** 2)
-        ws.append(sel.size)
+        share, threshold, run = -1.0, 0.0, 0
+        for db in range(63):
+            run += int(c[db])
+            f = run / total
+            if f < 0.2:
+                continue
+            edge = ((db + 1) / 64.0) ** 2 * 0.12
+            t = (math.ceil(edge / quantum - 1e-6) - 0.5) * quantum if quantum > 0 else edge
+            if share < 0 or abs(f - 0.5) < abs(share - 0.5):
+                share, threshold = f, t
+            if f >= 0.5:
+                break
+        if share < 0:
+            continue
+        sd = threshold / (math.sqrt(2) * float(erfinv(min(share, 0.98))))
+        v = max(0.5 * sd * sd, floor)
+        xs.append(((bb + 0.5) / 16) ** 2)
+        vs.append(v)
+        ws.append(total / (v * v))
     if len(xs) < 3:
-        return 1e-4, 1e-6
-    a, b = np.polyfit(xs, vs, 1, w=np.sqrt(ws))
-    return max(a, 1e-6), max(b, 1e-7)
+        return guess
+    xs, vs, ws = np.array(xs), np.array(vs), np.array(ws)
+    sw, sx, sv, sxx, sxv = ws.sum(), (ws * xs).sum(), (ws * vs).sum(), (ws * xs * xs).sum(), (ws * xs * vs).sum()
+    den = sw * sxx - sx * sx
+    a = (sw * sxv - sx * sv) / den if den > 0 else guess[0]
+    if a <= 0:
+        a = guess[0]
+    b = (sv - a * sx) / sw
+    if b < floor:
+        b = floor
+        num = (ws * xs * (vs - b)).sum()
+        a = num / sxx if sxx > 0 and num > 0 else guess[0]
+    return min(a, 0.05), min(b, 0.01)
+
+
+def fit_noise(ref, alt, offs, meta):
+    """Noise model from the reference and one other frame (not warped) with its tile offsets."""
+    black = float(np.mean(meta["black"]))
+    return fit_noise_counts(noise_hist(ref, alt, offs, meta.get("iso", 100)), meta.get("iso", 100), 1.0 / (meta["white"] - black))
 
 # ---------------------------------------------------------------------------
 # Merges
@@ -723,7 +793,7 @@ def merged(meta, frames, method):
     offsets = [np.zeros((math.ceil(qs[0].shape[0] / 16), math.ceil(qs[0].shape[1] / 16), 2))]
     for p in pyrs[1:]:
         offsets.append(align(pyrs[0], p))
-    noise = fit_noise(qs[0], warp(qs[1], offsets[1])) if len(qs) > 1 else (1e-4, 1e-6)
+    noise = fit_noise(qs[0], qs[1], offsets[1], meta) if len(qs) > 1 else (1e-4, 1e-6)
     if method == "single" or len(qs) == 1:
         merged.wsum = np.ones(qs[0].shape[:2])
         return qs[0], qs, offsets, noise
@@ -870,7 +940,7 @@ def cmd_dnbench(args):
             for p in pyrs[1:]:
                 offsets.append(align(pyrs[0], p))
             if nf > 1:
-                fitted = fit_noise(qs[0], warp(qs[1], offsets[1]))
+                fitted = fit_noise(qs[0], qs[1], offsets[1], meta)
                 noise = fitted if args.fitted_noise else DN_LEVELS[lvl]
                 mq, w = merge_robust(qs, offsets, noise)
                 print("     noise fit a=%.3g b=%.3g (true %.3g %.3g)" % (fitted + DN_LEVELS[lvl]))

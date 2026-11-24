@@ -148,7 +148,15 @@ void main() {
 
     /**
      * Noise estimate: histogram of |alt − ref| (aligned) per brightness bin, sampled on a sparse
-     * grid. 16 brightness bins (sqrt spacing) × 64 difference bins (sqrt spacing up to 0.12).
+     * grid. 16 brightness bins (sqrt spacing) × 64 difference bins (sqrt spacing up to 0.12),
+     * twice: every sample, then only the samples in flat areas.
+     *
+     * The brightness bin comes from the mean of the two frames, which is independent of their
+     * difference: binned by the reference alone, a dark pixel that noise pushed into a brighter
+     * bin brings its own excursion along and that bin reads too noisy. "Flat" looks at the eight
+     * neighbours of the reference only, never at the sample itself: where they span more than a
+     * rough guess of the noise allows there is texture, and half a pixel of misalignment on
+     * texture is not noise (it made the fit several times too high on detailed scenes).
      */
     val NOISE = GRID + """
 layout(rgba16f, binding = 0) readonly uniform image2D uRef;
@@ -156,6 +164,7 @@ layout(rgba16f, binding = 1) readonly uniform image2D uAlt;
 layout(rgba16i, binding = 2) readonly uniform iimage2D uAlign;
 layout(std430, binding = 3) buffer Hist { uint h[]; };
 uniform int uTile;
+uniform vec4 uGate;   // rough noise guess a, b and k: flat when (max - min)^2 <= k (a x + b); w unused
 void main() {
     ivec2 p = ivec2(gl_GlobalInvocationID.xy) * 4;
     ivec2 sz = imageSize(uRef);
@@ -163,10 +172,26 @@ void main() {
     ivec2 off = imageLoad(uAlign, min(p / uTile, imageSize(uAlign) - 1)).xy;
     vec4 r = imageLoad(uRef, p);
     vec4 a = imageLoad(uAlt, clamp(p + off, ivec2(0), sz - 1));
+    vec4 hi = vec4(-1.0e9);
+    vec4 lo = vec4(1.0e9);
+    vec4 sum = vec4(0.0);
+    for (int y = -1; y <= 1; y++) {
+        for (int x = -1; x <= 1; x++) {
+            if (x != 0 || y != 0) {
+                vec4 n = imageLoad(uRef, clamp(p + ivec2(x, y), ivec2(0), sz - 1));
+                hi = max(hi, n);
+                lo = min(lo, n);
+                sum += n;
+            }
+        }
+    }
+    vec4 span = hi - lo;
+    vec4 limit = uGate.z * (uGate.x * max(sum * 0.125, vec4(0.0)) + uGate.y);
     for (int c = 0; c < 4; c++) {
-        int bb = clamp(int(sqrt(max(r[c], 0.0)) * 16.0), 0, 15);
+        int bb = clamp(int(sqrt(max(0.5 * (r[c] + a[c]), 0.0)) * 16.0), 0, 15);
         int db = min(int(sqrt(abs(a[c] - r[c]) / 0.12) * 64.0), 63);
         atomicAdd(h[bb * 64 + db], 1u);
+        if (span[c] * span[c] <= limit[c]) atomicAdd(h[1024 + bb * 64 + db], 1u);
     }
 }
 """

@@ -56,7 +56,7 @@ the quad grid.
 | Wiener merge per tile, HDR+ style | same on texture, +1.3 dB where alignment fails (aliasing patterns) | small gain; an FFT per tile on GLES is a lot of work for it |
 | Super-resolution by splatting samples | below the app's merge + bicubic in every region tried | **not ready**: needs anisotropic kernels and alignment on the full RAW grid |
 | Local Laplacian tone mapping | runs; judged by eye only | to compare with the app's two-scale tone mapping on real bursts |
-| Noise fit | correct on flat data; 10× too high on this harsh chart (residual of sub-pixel texture) | check on real bursts before changing the app |
+| Noise fit | correct on flat data; 10× too high on this harsh chart (residual of sub-pixel texture) | fixed on 24 November, see below |
 
 Nothing from these prototypes is in the app yet: each one waits for a comparison on real bursts.
 
@@ -82,9 +82,47 @@ burst, as the app does.
 The multi-scale denoise is in the app since this date (`DN_DOWN`, `DN_UP`). It has not been
 compared on real bursts yet.
 
-The noise fitted from a synthetic burst is 3-9 times too high (the residual of the texture between
-two frames counts as noise), which makes any denoise smooth too much. On real bursts this is still
-to be checked against flat areas.
+The noise fitted from a synthetic burst was 3-9 times too high (the residual of the texture between
+two frames counted as noise), which made any denoise smooth too much.
+
+## Noise fit (24 November 2026)
+
+Three faults, found by simulation and fixed in the app (`NOISE`, `fitNoise`) and here (`noise_hist`,
+`fit_noise_counts`):
+
+- **Whole sensor steps.** The median of |difference| can only land on a whole step. With 0.6 to 2
+  steps of read noise (the shadows at ISO 100-342) the variance of the darkest bin came out between
+  0.45× and 1.7× the truth, and b ended anywhere, often at its lower limit of 1e-7. Now sigma comes
+  from the share of differences below a threshold half a step above a whole one, through the normal
+  distribution.
+- **Brightness from the reference alone.** A dark pixel that noise pushed into a brighter bin brings
+  its own excursion along. The bin now comes from the mean of the two frames, which is independent
+  of their difference.
+- **Texture.** Only samples whose eight neighbours in the reference span no more than a rough guess
+  of the noise allows (from the ISO) are counted; the sample itself never takes part in the test.
+  When fewer than a tenth pass, every sample is used, as before.
+
+The line is fitted with the relative error of each bin (count / variance²) instead of the count
+alone, so the dark bins decide b.
+
+| Data | Before | After |
+|---|---|---|
+| Flat, 10 bit, read noise 0.3-2.1 steps: sigma seen at x = 0.002 | 0.62× to 2.19× the truth | 1.00× to 1.06× |
+| Synthetic chart (texture, zone plate): sigma at x = 0.02 / 0.3 | 1.7× to 7.4× | 0.97× to 1.16× |
+| Chart, 8 frames, ISO 100-like noise: merged + denoised, PSNR | 34.3 dB (true noise: 45.9) | 45.8 dB |
+| Chart, 8 frames, ISO 342-like noise | 33.8 dB (true noise: 41.3) | 41.0 dB |
+
+Not checked on real bursts yet (none were at hand).
+
+Tried the same day and left out, with the numbers:
+
+- Sub-pixel offset for every tile (today only the tiles whose best offset is the centre of the last
+  ±1 search get one, 20-26 % of them): merged PSNR within ±0.15 dB, no gain.
+- Colour step reading the denoised image instead of the merged one: 5-45 % more coarse colour error
+  on a smooth dark scene. The multi-scale denoise halves the total error, but the coarse part of it
+  (wider than about 8 quad pixels) does not go down and in places goes up: grey +5 to +26 % (+21 to
+  +55 % beyond 24 pixels), colour −3 to +18 %. Wider pyramid filters (7 or 9 taps) and more levels
+  change that by a few percent only, so it is not the aliasing of the pyramid. Still open.
 
 ## References
 

@@ -190,7 +190,9 @@ zero shutter lag study), `tap` and `lock` (a viewfinder point as `x,y` in 0..1: 
 long press there does), `unlock`, `focuskey` (half press of the camera key, down or up),
 `switch`, `shoot`. See `DebugCommands.kt`.
 
-Unit tests (dial labels, Planckian locus, noise model fit) run on the host:
+Unit tests (dial labels, Planckian locus, noise model fit on quantised data, video quality
+choice) run on the host. With `glslangValidator` installed they also compile every compute
+shader, so a typo shows before the phone does:
 
 ```bash
 ./gradlew testDebugUnitTest
@@ -242,9 +244,13 @@ of RAW frames and merges them on the GPU (OpenGL ES 3.1 compute shaders, `proces
    the two nearest tiles' offsets, and a robustness weight from the local difference against the
    noise expected at that brightness; weighted accumulation against the reference. Highlight
    frames are scaled to the reference exposure and only merged where the reference is near white.
-3. **Noise model**: measured on every burst from the first aligned pair (median absolute
-   difference per brightness bin, fit of variance = a·x + b), since the HAL reports no noise
-   profile.
+3. **Noise model**: measured on every burst from the first aligned pair, since the HAL reports
+   no noise profile: histograms of the difference per brightness bin (brightness from the mean of
+   the two frames), taken in flat areas only (where the eight neighbours of the reference agree:
+   on texture a sub-pixel misalignment is not noise), then a fit of variance = a·x + b. Sigma
+   comes from the share of differences below a threshold placed half a sensor step above a whole
+   one: with 10-bit data and 1-2 steps of noise in the shadows, the plain median was off by up
+   to 2× either way.
 4. **Finishing**: lens shading map from the capture result, white balance gains and colour
    matrix of the HAL's auto white balance, highlight clipping to a common level (no magenta
    highlights), multi-scale spatial noise reduction (opponent colour space, Laplacian pyramid,
