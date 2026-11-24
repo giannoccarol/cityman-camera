@@ -77,7 +77,17 @@ spinner veloce. **Aperto:** un secondo scatto subito dopo il primo trova il tele
 di memoria (lmkd a pressione media, 600 MB disponibili): un fotogramma impiega 4,6 s, 3 fotogrammi
 su 10 vanno persi e l'interfaccia salta di nuovo. Da riprendere con il rilascio dei buffer RAW.
 
-### Stima del rumore (24/11, branch `video-quality`, non in una release)
+### Fuoco al tocco (24/11, release 0.5.2)
+
+Il tocco passava al fuoco singolo sul punto e ci restava finché non si teneva premuto il mirino: il
+fuoco continuo non tornava da solo. Ora il tocco tiene fuoco ed esposizione sul punto per 5 secondi
+(se scadono durante uno scatto o una raffica aspetta la fine), poi tornano fuoco continuo e
+misurazione normale. La pressione lunga blocca il punto (badge AF·AE, che si tocca per sbloccare).
+Il tasto fotocamera a metà corsa tiene il fuoco solo finché è premuto: prima non lo rilasciava mai.
+Il punto non sopravvive più al cambio fotocamera né all'uscita dall'app. Provato solo sull'emulatore
+(Android 13): da provare sul 950 XL e sul 930.
+
+### Stima del rumore (24/11, release 0.5.2)
 
 Revisione degli algoritmi chiesta dall'utente. Trovato con una simulazione e corretto (shader `NOISE`,
 `fitNoise`, stessa cosa nel laboratorio): la stima del rumore di ogni raffica sbagliava in due sensi.
@@ -120,7 +130,7 @@ sull'emulatore API 30 (GLES 3.0); il video YUV → GL non registra sull'emulator
 Da provare: 950 XL con 18.1 (livello HAL, RAW, multi-frame sull'Adreno 430 come su A16, video diretto),
 Lumia 1520/930 quando ci sarà un HAL camera.
 
-### Qualità video (24/11, branch `video-quality`, non in una release)
+### Qualità video (24/11, release 0.5.2)
 
 Selettore 720p30/60, 1080p30/60, 4K30 chiesto dall'utente per 930 e 1520 (Android 11, camera
 LEGACY). Ogni voce compare solo se la camera ha la dimensione, il range di fps e il codificatore

@@ -1,0 +1,4 @@
+0.5.2
+- Video quality picker: 720p or 1080p at 30 or 60 fps and 4K at 30 fps, each shown only when the camera and the encoder can do it (also on Android 11 phones with a LEGACY camera, such as the Lumia 930 and 1520)
+- Tap to focus no longer stays locked: the point is held for 5 seconds, then continuous focus comes back. Long-press to keep it (AF·AE lock). The camera key holds focus only while it is half pressed
+- Multi-frame: the noise of each burst is measured correctly in the shadows and on detailed scenes; the merge and the noise reduction rely on it

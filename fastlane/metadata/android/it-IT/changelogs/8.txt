@@ -1,0 +1,4 @@
+0.5.2
+- Qualità video a scelta: 720p o 1080p a 30 o 60 fps e 4K a 30 fps, ognuna mostrata solo se fotocamera e codificatore la reggono (anche sui telefoni Android 11 con fotocamera LEGACY, come Lumia 930 e 1520)
+- Il fuoco al tocco non resta più bloccato: il punto vale per 5 secondi, poi torna il fuoco continuo. Tieni premuto per bloccarlo (blocco AF·AE). Il tasto fotocamera tiene il fuoco solo finché è premuto a metà
+- Multi-frame: il rumore di ogni raffica viene misurato bene nelle ombre e sulle scene dettagliate; fusione e riduzione del rumore si basano su quella misura
