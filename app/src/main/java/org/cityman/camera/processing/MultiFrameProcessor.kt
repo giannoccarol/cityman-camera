@@ -220,7 +220,15 @@ class MultiFrameProcessor {
             gray(q, altPyr)
             alignLevels()
             if (!noiseDone) {
-                estimateNoise(s)
+                // Without the measurement the burst still merges, with the model guessed from
+                // the ISO: a GPU that refuses the noise shader must not cost the whole photo.
+                try {
+                    estimateNoise(s)
+                } catch (e: Exception) {
+                    Log.w(TAG, "noise estimate failed, using the guess from the ISO", e)
+                    noise = noiseGuess(s.iso)
+                    while (GLES31.glGetError() != GLES31.GL_NO_ERROR) Unit
+                }
                 noiseDone = true
             }
             merge(short = false, hdr = s.shortFrames > 0)
