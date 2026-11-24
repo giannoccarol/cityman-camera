@@ -60,6 +60,11 @@ object VideoEncoders {
         }.onFailure { Log.w("ArcoCamera", "encoder list", it) }.getOrDefault(emptyList())
     }
 
+    /** For the log: each encoder's size and frame-rate limits. */
+    fun describe(): String = avc.joinToString { c ->
+        "${c.supportedWidths.upper}x${c.supportedHeights.upper}, ${c.supportedFrameRates}, 4K: ${runCatching { c.getSupportedFrameRatesFor(3840, 2160) }.getOrNull()}"
+    }.ifEmpty { "none listed" }
+
     /** True when an H.264 encoder takes this size and rate; unknown (no list) counts as yes. */
     fun supports(width: Int, height: Int, fps: Int): Boolean =
         avc.isEmpty() || avc.any { runCatching { it.areSizeAndRateSupported(width, height, fps.toDouble()) }.getOrDefault(false) }

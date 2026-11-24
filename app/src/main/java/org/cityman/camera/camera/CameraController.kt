@@ -980,7 +980,8 @@ class CameraController(private val context: Context) {
         if (st.mode == CaptureMode.VIDEO) {
             val vc = videoConfig(c)
             val size = vc.size
-            Log.i(TAG, "video ${vc.quality?.label ?: "${size.width}x${size.height}"} (${size.width}x${size.height} at ${vc.fps} fps, AE ${vc.range}), offered: ${c.videoQualities.joinToString { it.label }}")
+            Log.i(TAG, "video ${vc.quality?.label ?: "${size.width}x${size.height}"} (${size.width}x${size.height} at ${vc.fps} fps, AE ${vc.range}), offered: ${c.videoQualities.joinToString { it.label }}" +
+                VideoQuality.entries.mapNotNull { q -> c.videoQualityProblem(q)?.let { "; ${q.label}: $it" } }.joinToString(""))
             if (c.legacy) {
                 // Never captured: it only gives Android's HAL1 layer the video's shape (see jpegSizeLike).
                 c.jpegSizeLike(size)?.let { js ->

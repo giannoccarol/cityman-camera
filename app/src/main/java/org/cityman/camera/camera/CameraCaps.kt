@@ -141,14 +141,16 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
      * YUV path, the frame rate is in the AE ranges and fits the stream's minimum frame duration,
      * and an H.264 encoder takes it. 720p30 and 1080p30 skip the encoder check, as before.
      */
-    val videoQualities: List<VideoQuality> by lazy {
-        VideoQuality.entries.filter { q ->
-            listed(videoSizes, q.width, q.height) &&
-                (listed(yuvSizes, q.width, q.height) || listed(previewSizes, q.width, q.height)) &&
-                (q.fps <= 30 || videoRange(q.fps) != null) &&
-                frameDurationOk(q) &&
-                (q == VideoQuality.HD30 || q == VideoQuality.FHD30 || VideoEncoders.supports(q.width, q.height, q.fps))
-        }
+    val videoQualities: List<VideoQuality> by lazy { VideoQuality.entries.filter { videoQualityProblem(it) == null } }
+
+    /** Why this camera does not offer [q], or null when it does (logged with the session). */
+    fun videoQualityProblem(q: VideoQuality): String? = when {
+        !listed(videoSizes, q.width, q.height) -> "no recorder size"
+        !listed(yuvSizes, q.width, q.height) && !listed(previewSizes, q.width, q.height) -> "no YUV/preview size"
+        q.fps > 30 && videoRange(q.fps) == null -> "no ${q.fps} fps AE range"
+        !frameDurationOk(q) -> "min frame duration ${runCatching { map.getOutputMinFrameDuration(MediaRecorder::class.java, Size(q.width, q.height)) }.getOrDefault(0L) / 1000} µs"
+        q != VideoQuality.HD30 && q != VideoQuality.FHD30 && !VideoEncoders.supports(q.width, q.height, q.fps) -> "H.264 encoder: ${VideoEncoders.describe()}"
+        else -> null
     }
 
     /** What to record for the user's [wanted] quality on this camera. */
@@ -173,8 +175,10 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
     fun fpsRange(video: Boolean): Range<Int>? {
         if (fpsRanges.isEmpty()) return null
         return if (video) {
+            // Never a 60 fps range for 30 fps video: HAL1's 31.5 fps rounds up to 32 here.
             fpsRanges.filter { it.lower == it.upper && it.upper <= 30 }.maxByOrNull { it.upper }
-                ?: fpsRanges.maxBy { it.upper }
+                ?: fpsRanges.filter { it.upper <= 32 }.maxByOrNull { it.upper }
+                ?: fpsRanges.minBy { it.upper }
         } else {
             fpsRanges.maxWith(compareBy<Range<Int>> { it.upper - it.lower }.thenBy { it.upper })
         }
