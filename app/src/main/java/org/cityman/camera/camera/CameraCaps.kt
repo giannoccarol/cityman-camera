@@ -122,13 +122,16 @@ class CameraCaps(val id: String, val chars: CameraCharacteristics) {
     private fun listed(list: List<Size>, w: Int, h: Int) = list.any { it.width == w && it.height == h }
 
     /**
-     * AE range for video at [fps]: the usual one at 30 fps; above that a fixed range, or one that
-     * ends there. Only listed ranges: Android's LEGACY layer drops any other (HAL1
+     * AE range for video at [fps]: the usual one at 30 fps. Above that, first a range that may
+     * slow down a little (50-60): in dim light the exposure can then grow from 10 to 20 ms with
+     * 50 Hz antibanding instead of the picture going dark; then a fixed range, then any ending
+     * there. Only listed ranges: Android's LEGACY layer drops any other (HAL1
      * `preview-fps-range-values`), and HAL3 may refuse it.
      */
     private fun videoRange(fps: Int): Range<Int>? =
         if (fps <= 30) fpsRange(video = true)
-        else fpsRanges.firstOrNull { it.lower == fps && it.upper == fps }
+        else fpsRanges.filter { it.upper == fps && it.lower < fps && it.lower >= fps * 5 / 6 }.minByOrNull { it.lower }
+            ?: fpsRanges.firstOrNull { it.lower == fps && it.upper == fps }
             ?: fpsRanges.filter { it.upper == fps }.maxByOrNull { it.lower }
 
     private fun frameDurationOk(q: VideoQuality): Boolean {
